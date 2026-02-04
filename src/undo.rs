@@ -39,4 +39,11 @@ impl<S: SearchState> UndoStack<S> {
             }
         }
     }
+    pub fn draw(&self) {
+        println!("Undo Stack (size={}):", self.len());
+        for (i, entry) in self.stack.iter().enumerate() {
+            println!("  [{}]: {}", i, entry);
+        }
+    }
 }
+

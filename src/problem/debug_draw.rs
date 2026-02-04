@@ -10,11 +10,12 @@ impl Graph {
 
         for dy in 0..=2 * h {
             for dx in 0..=2 * w {
-                let s = self.debug_char(dx, dy, s);
-                print!("{}", s);
+                let str = self.debug_char(dx, dy, s);
+                print!("{}", str);
             }
             println!();
         }
+        println!();
     }
     fn debug_char(&self, dx: usize, dy: usize, s: Option<&WitnessState>) -> &str {
         match (dx % 2, dy % 2) {
@@ -42,10 +43,37 @@ impl Graph {
             "+"
         }
     }
-}
+    fn debug_h_edge(&self, x: usize, y: usize, st: Option<&WitnessState>) -> &str {
+        if !self.has_h_edge(x, y) {
+            return " ".into();
+        }
 
-impl WitnessState {
-    pub fn draw(&self, g: &Graph) {
-        g.draw_with_state(Some(self));
+        let used = st.map_or(false, |st| {
+            let ei = self.h_edge_index(x, y);
+            test_bit(&st.used_edges, ei)
+        });
+
+        if used { "=".into() } else { "-".into() }
+    }
+    fn debug_v_edge(&self, x: usize, y: usize, st: Option<&WitnessState>) -> &str {
+        if !self.has_v_edge(x, y) {
+            return " ".into();
+        }
+
+        let used = st.map_or(false, |st| {
+            let ei = self.v_edge_index(x, y);
+            test_bit(&st.used_edges, ei)
+        });
+
+        if used { "#".into() } else { "|".into() }
+    }
+    fn debug_cell(&self, x: usize, y: usize) -> &str {
+        // // 预留：颜色、消除块、tetris、星星等
+        // if let Some(rule) = self.cell_rule(x, y) {
+        //     rule.debug_char()
+        // } else {
+        //     ".".into()
+        // }
+        ".".into()
     }
 }

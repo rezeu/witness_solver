@@ -7,11 +7,25 @@ pub struct WitnessState {
     pub degrees: Vec<u8>,
     pub head: usize,
 }
-
 pub enum UndoEntry {
     DecDeg { node_index: usize },
     ClearEdgeBit { edge_index: usize },
     Head { node_index: usize },
+}
+impl std::fmt::Display for UndoEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UndoEntry::DecDeg { node_index } => {
+                write!(f, "DecDeg {{ node_index: {} }}", node_index)
+            }
+            UndoEntry::ClearEdgeBit { edge_index } => {
+                write!(f, "ClearEdgeBit {{ edge_index: {} }}", edge_index)
+            }
+            UndoEntry::Head { node_index } => {
+                write!(f, "Head {{ node_index: {} }}", node_index)
+            }
+        }
+    }
 }
 impl WitnessState {
     pub fn new(g: &Graph) -> Self {
@@ -73,7 +87,7 @@ impl SearchState for WitnessState {
         self.degrees[u] += 1;
         self.degrees[v] += 1;
 
-        debug_assert!(self.head == u || self.head == v);
+        debug_assert!(self.head == u || self.head == v, "Head: {}, u: {}, v: {}, mv: {}", self.head, u, v, mv);
         undost.push(UndoEntry::Head {
             node_index: self.head,
         });
@@ -92,6 +106,10 @@ impl SearchState for WitnessState {
                 self.head = node_index;
             }
         }
+    }
+
+    fn draw(&self, g: &Graph) {
+        g.draw_with_state(Some(self));
     }
 }
 
