@@ -1,0 +1,9 @@
+{
+  "width": 2,
+  "height": 2,
+  "starts": [[0, 2]],
+  "ends": [[2, 0]],
+  "triangles": [
+    {"pos": [0, 0], "count": 2}
+  ]
+}

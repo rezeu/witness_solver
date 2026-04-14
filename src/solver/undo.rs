@@ -1,9 +1,10 @@
-use crate::state::SearchState;
+use crate::solver::state::SearchState;
 use smallvec::SmallVec;
-const UNDO_STACK_INLINE_CAPACITY: usize = 64;
+
+const INLINE_CAP: usize = 64;
 
 pub struct UndoStack<S: SearchState> {
-    stack: SmallVec<[S::UndoEntry; UNDO_STACK_INLINE_CAPACITY]>,
+    stack: SmallVec<[S::UndoEntry; INLINE_CAP]>,
     marks: Vec<usize>,
 }
 
@@ -14,36 +15,28 @@ impl<S: SearchState> UndoStack<S> {
             marks: Vec::new(),
         }
     }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.stack.len()
     }
 
+    #[inline]
     pub fn push(&mut self, entry: S::UndoEntry) {
         self.stack.push(entry);
     }
 
-    pub fn pop(&mut self) -> Option<S::UndoEntry> {
-        self.stack.pop()
-    }
-
+    #[inline]
     pub fn mark(&mut self) {
         self.marks.push(self.len());
     }
 
     pub fn rollback(&mut self, state: &mut S) {
-        if let Some(target_len) = self.marks.pop() {
-            while self.len() > target_len {
-                let e = self.pop().unwrap_or_else(|| panic!("Undo stack underflow"));
+        if let Some(target) = self.marks.pop() {
+            while self.len() > target {
+                let e = self.stack.pop().expect("undo stack underflow");
                 state.apply_undo(e);
             }
         }
     }
-    pub fn draw(&self) {
-        println!("Undo Stack (size={}):", self.len());
-        for (i, entry) in self.stack.iter().enumerate() {
-            println!("  [{}]: {}", i, entry);
-        }
-    }
 }
-
