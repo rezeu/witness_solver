@@ -1,0 +1,11 @@
+{
+  "width": 2,
+  "height": 2,
+  "starts": [[0, 2]],
+  "ends": [[2, 0]],
+  "squares": [
+    {"pos": [0, 0], "color": 1},
+    {"pos": [1, 0], "color": 2}
+  ],
+  "eliminations": [[0, 1]]
+}

@@ -18,42 +18,36 @@ fn can_reach(s: &WitnessState, g: &WitnessGraph, from: usize, to: usize) -> bool
         return true;
     }
 
-    // Stack-allocated visited bitset (supports up to 256 nodes = 16×16 grid).
     let mut visited = [0u64; 4];
-    let mut stack = Vec::with_capacity(32);
-
+    let mut stack_buf = [0usize; 289];
     bit_set(&mut visited, from);
-    stack.push(from);
+    stack_buf[0] = from;
+    let mut sp: usize = 1;
 
-    while let Some(u) = stack.pop() {
-        g.for_each_neighbor(u, |v| {
-            if v == to {
-                // Found — we'll detect via flag after the closure.
-            }
+    while sp > 0 {
+        sp -= 1;
+        let u = stack_buf[sp];
+        let (neighbors, count) = &g.adj[u];
+
+        for i in 0..*count as usize {
+            let v = neighbors[i];
             if bit_test(&visited, v) {
-                return;
+                continue;
             }
-            // Can only pass through unvisited nodes (degree 0) or the end.
             if s.degrees[v] > 0 && v != to {
-                return;
+                continue;
             }
             let ei = g.edge_endpoints_to_idx(u, v);
             if s.used(ei) || g.is_broken(ei) {
-                return;
+                continue;
             }
             bit_set(&mut visited, v);
-            stack.push(v);
-        });
-
-        // Check if we reached `to` as a direct neighbor.
-        // (for_each_neighbor can't early-return, so check after.)
-        if bit_test(&visited, to) {
-            return true;
+            if v == to {
+                return true;
+            }
+            stack_buf[sp] = v;
+            sp += 1;
         }
-
-        // Also check direct adjacency to `to` explicitly (for_each_neighbor
-        // skips setting visited for `to` since it might have degree > 0,
-        // but we DO want to reach it).
     }
 
     false
@@ -85,29 +79,86 @@ impl Pruner<WitnessState> for DotReachabilityPruner {
 
 fn compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
     let mut reachable = [0u64; 4];
-    let mut stack = Vec::with_capacity(32);
-
+    let mut stack_buf = [0usize; 289];
     bit_set(&mut reachable, s.head);
-    stack.push(s.head);
+    stack_buf[0] = s.head;
+    let mut sp: usize = 1;
 
-    while let Some(u) = stack.pop() {
-        g.for_each_neighbor(u, |v| {
+    while sp > 0 {
+        sp -= 1;
+        let u = stack_buf[sp];
+        let (neighbors, count) = &g.adj[u];
+
+        for i in 0..*count as usize {
+            let v = neighbors[i];
             if bit_test(&reachable, v) {
-                return;
+                continue;
             }
             if s.degrees[v] > 0 && v != g.end {
-                return;
+                continue;
             }
             let ei = g.edge_endpoints_to_idx(u, v);
             if s.used(ei) || g.is_broken(ei) {
-                return;
+                continue;
             }
             bit_set(&mut reachable, v);
-            stack.push(v);
-        });
+            stack_buf[sp] = v;
+            sp += 1;
+        }
     }
 
     reachable
+}
+
+/// Prune early if any triangle cell's constraint is already impossible.
+/// For each triangle cell requiring N boundary edges:
+///   - If already-used edges > N → prune (too many)
+///   - If used + remaining-available < N → prune (can't reach target)
+pub struct TrianglePruner;
+
+impl Pruner<WitnessState> for TrianglePruner {
+    fn should_prune(&self, s: &WitnessState, g: &WitnessGraph) -> bool {
+        for &(cx, cy, count) in &g.triangle_cells {
+            let required = count as usize;
+            let mut used = 0usize;
+            let mut available = 0usize;
+
+            // Check 4 boundary edges of cell (cx, cy)
+            // top: h_edge(cx, cy)
+            let ei = g.h_edge_index(cx, cy);
+            if s.used(ei) {
+                used += 1;
+            } else if !g.is_broken(ei) {
+                available += 1;
+            }
+            // bottom: h_edge(cx, cy+1)
+            let ei = g.h_edge_index(cx, cy + 1);
+            if s.used(ei) {
+                used += 1;
+            } else if !g.is_broken(ei) {
+                available += 1;
+            }
+            // left: v_edge(cx, cy)
+            let ei = g.v_edge_index(cx, cy);
+            if s.used(ei) {
+                used += 1;
+            } else if !g.is_broken(ei) {
+                available += 1;
+            }
+            // right: v_edge(cx+1, cy)
+            let ei = g.v_edge_index(cx + 1, cy);
+            if s.used(ei) {
+                used += 1;
+            } else if !g.is_broken(ei) {
+                available += 1;
+            }
+
+            if used > required || used + available < required {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // --- tiny bitset on [u64; 4] (256 bits, stack-allocated) ------------------

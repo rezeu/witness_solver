@@ -31,6 +31,7 @@ fn dfs_inner<S, P, Q>(
     undo: &mut UndoStack<S>,
     stats: &DfsStats,
     found: &AtomicBool,
+    moves_buf: &mut Vec<S::Move>,
 ) -> Option<S>
 where
     S: SearchState,
@@ -49,18 +50,22 @@ where
         return Some(state.clone());
     }
 
-    let mut moves = Vec::new();
-    state.gen_moves(ctx, &mut moves);
+    let moves_start = moves_buf.len();
+    state.gen_moves(ctx, moves_buf);
+    let moves_end = moves_buf.len();
 
-    for mv in moves {
+    for i in moves_start..moves_end {
+        let mv = moves_buf[i];
         state.apply_move(ctx, mv, undo);
 
-        if let Some(solution) = dfs_inner(ctx, state, pruners, satisfiers, undo, stats, found) {
+        if let Some(solution) = dfs_inner(ctx, state, pruners, satisfiers, undo, stats, found, moves_buf) {
             return Some(solution);
         }
 
         undo.rollback(state);
     }
+
+    moves_buf.truncate(moves_start);
 
     None
 }
@@ -84,8 +89,9 @@ where
     let stats = DfsStats::new();
     let mut state = initial;
     let mut undo = UndoStack::new();
+    let mut moves_buf = Vec::new();
 
-    let solution = dfs_inner(ctx, &mut state, pruners, satisfiers, &mut undo, &stats, &found);
+    let solution = dfs_inner(ctx, &mut state, pruners, satisfiers, &mut undo, &stats, &found, &mut moves_buf);
     (solution, stats)
 }
 
@@ -129,14 +135,17 @@ where
             let mut moves = Vec::new();
             state.gen_moves(ctx, &mut moves);
 
-            for (i, mv) in moves.iter().enumerate() {
-                let mut s = if i == moves.len() - 1 {
-                    state.clone() // last move also clones (state consumed by drain)
-                } else {
-                    state.clone()
-                };
+            // Clone for all moves except the last (move the state into it).
+            if let Some(last_mv) = moves.pop() {
+                for &mv in &moves {
+                    let mut s = state.clone();
+                    let mut undo = UndoStack::new();
+                    s.apply_move(ctx, mv, &mut undo);
+                    next.push(s);
+                }
+                let mut s = state;
                 let mut undo = UndoStack::new();
-                s.apply_move(ctx, *mv, &mut undo);
+                s.apply_move(ctx, last_mv, &mut undo);
                 next.push(s);
             }
         }
@@ -150,8 +159,9 @@ where
 
         let mut state = state;
         let mut undo = UndoStack::new();
+        let mut moves_buf = Vec::new();
 
-        let result = dfs_inner(ctx, &mut state, pruners, satisfiers, &mut undo, &stats, &found);
+        let result = dfs_inner(ctx, &mut state, pruners, satisfiers, &mut undo, &stats, &found, &mut moves_buf);
         if result.is_some() {
             found.store(true, Ordering::Relaxed);
         }

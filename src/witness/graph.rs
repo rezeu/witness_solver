@@ -90,6 +90,10 @@ pub struct WitnessGraph {
     pub dot_edges: Vec<usize>,     // list of edge indices with dots
     pub cells: Vec<CellConstraint>,// cy * width + cx
     pub has_region_rules: bool,    // any cell has square/star/tetris/elimination
+    pub triangle_cells: Vec<(usize, usize, u8)>, // (cx, cy, count) for early pruning
+    /// Pre-computed adjacency: adj[node] = ([neighbor; 4], count).
+    /// Avoids division/modulo in hot paths (gen_moves, pruner BFS).
+    pub adj: Vec<([usize; 4], u8)>,
 }
 
 // --- Bitset helpers (small, for broken-edge set) --------------------------
@@ -194,7 +198,48 @@ impl WitnessGraph {
             cells[idx] = CellConstraint::Elimination;
         }
 
-        let has_region_rules = cells.iter().any(|c| !matches!(c, CellConstraint::None));
+        let has_region_rules = cells.iter().any(|c| matches!(c,
+            CellConstraint::Square { .. } | CellConstraint::Star { .. } |
+            CellConstraint::Tetris { .. } | CellConstraint::Elimination
+        ));
+
+        // Pre-compute triangle cells for early pruning
+        let mut triangle_cells = Vec::new();
+        for cy in 0..h {
+            for cx in 0..w {
+                if let CellConstraint::Triangle { count } = cells[cy * w + cx] {
+                    triangle_cells.push((cx, cy, count));
+                }
+            }
+        }
+
+        // Pre-compute adjacency list (avoids division/modulo in hot paths)
+        let num_nodes = (w + 1) * (h + 1);
+        let mut adj = vec![([0usize; 4], 0u8); num_nodes];
+        for y in 0..=h {
+            for x in 0..=w {
+                let ni = y * (w + 1) + x;
+                let mut neighbors = [0usize; 4];
+                let mut count = 0u8;
+                if x > 0 {
+                    neighbors[count as usize] = ni - 1;
+                    count += 1;
+                }
+                if x < w {
+                    neighbors[count as usize] = ni + 1;
+                    count += 1;
+                }
+                if y > 0 {
+                    neighbors[count as usize] = ni - (w + 1);
+                    count += 1;
+                }
+                if y < h {
+                    neighbors[count as usize] = ni + (w + 1);
+                    count += 1;
+                }
+                adj[ni] = (neighbors, count);
+            }
+        }
 
         Ok(WitnessGraph {
             width: w,
@@ -206,6 +251,8 @@ impl WitnessGraph {
             dot_edges,
             cells,
             has_region_rules,
+            triangle_cells,
+            adj,
         })
     }
 
@@ -304,20 +351,12 @@ impl WitnessGraph {
     }
 
     /// Iterate all grid-adjacent nodes of `u` via closure (zero-allocation).
+    /// Uses pre-computed adjacency list — no division/modulo.
     #[inline]
     pub fn for_each_neighbor(&self, u: usize, mut f: impl FnMut(usize)) {
-        let (ux, uy) = self.node_idx_to_xy(u);
-        if ux > 0 {
-            f(self.node_xy_to_idx(ux - 1, uy));
-        }
-        if ux < self.width {
-            f(self.node_xy_to_idx(ux + 1, uy));
-        }
-        if uy > 0 {
-            f(self.node_xy_to_idx(ux, uy - 1));
-        }
-        if uy < self.height {
-            f(self.node_xy_to_idx(ux, uy + 1));
+        let (neighbors, count) = &self.adj[u];
+        for i in 0..*count as usize {
+            f(neighbors[i]);
         }
     }
 }

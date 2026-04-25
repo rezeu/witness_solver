@@ -36,8 +36,8 @@ All traits require `Send + Sync` for parallel safety. The context (`Ctx`) is sha
 - **`graph.rs`** — `WitnessGraph` loaded from JSON. Contains grid dimensions, start/end nodes, broken edges (bitset), dot nodes/edges (lists), cell constraints (`CellConstraint` enum: Square, Star, Triangle, Tetris, Elimination).
 - **`state.rs`** — `WitnessState` implements `SearchState<Ctx=WitnessGraph>`. Tracks used edges as bitset (`Vec<u64>`), per-node degrees, head position. Moves are edge indices. `gen_moves` enforces: no revisiting nodes, no broken edges, stop at end.
 - **`region.rs`** — Flood-fill computation of cell regions separated by the current path. Two cells are connected iff the grid edge between them is NOT used.
-- **`rules.rs`** — `WitnessValidator` implements `Satisfier`. Checks in order: path complete → degree invariant → dots → triangles → (compute regions) → squares → stars. Region computation is deferred until needed.
-- **`pruners.rs`** — `ReachabilityPruner`: BFS from head to end through unvisited nodes. `DotReachabilityPruner`: also checks dot nodes reachable. Uses stack-allocated `[u64; 4]` bitset (supports up to 16x16 grids).
+- **`rules.rs`** — `WitnessValidator` implements `Satisfier`. Checks in order: path complete → degree invariant → dots → triangles → (compute regions) → squares → stars → tetris. With elimination marks, uses per-region violation counting with elimination pairing. Region computation is deferred until needed.
+- **`pruners.rs`** — `ReachabilityPruner`: BFS from head to end through unvisited nodes. `DotReachabilityPruner`: also checks dot nodes reachable. `TrianglePruner`: early detection of impossible triangle constraints. Uses stack-allocated `[u64; 4]` bitset and `[usize; 289]` stack (supports up to 16x16 grids). Pre-computed adjacency list eliminates division/modulo in hot paths.
 - **`debug_draw.rs`** — ASCII visualization. `=`/`#` for used horizontal/vertical edges, `H` for head, `S`/`E` for start/end, `o` for dots, `B`/`W` for squares.
 
 ### Edge Indexing (critical to understand)
@@ -69,5 +69,13 @@ All fields except width/height/starts/ends are optional. Coordinates: nodes are 
 
 ## Implemented vs Stubbed
 
-**Working**: line path, dots, colored squares, stars, triangles, reachability pruning, parallel DFS
-**Stubbed (TODO)**: tetris/polyomino tiling, elimination marks, symmetry puzzles
+**Working**: line path, dots, colored squares, stars, triangles, tetris/polyomino tiling (positive and negative), elimination marks, reachability pruning, triangle early pruning, parallel DFS with profiling (`--profile` flag)
+**Stubbed (TODO)**: symmetry puzzles
+
+## Performance
+
+- DFS with rayon work-stealing; `split_depth` controls parallelism granularity
+- Pre-computed adjacency list, reusable moves buffer, stack-allocated pruner BFS
+- `--profile` flag benchmarks sequential vs parallel at multiple split depths
+- 6x6 with constraints: ~90s sequential, ~4.5s parallel (20x speedup on 18 cores)
+- 7x7 with constraints: solves in ~7s parallel

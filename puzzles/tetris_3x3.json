@@ -1,0 +1,11 @@
+{
+  "width": 3,
+  "height": 3,
+  "starts": [[0, 3]],
+  "ends": [[3, 0]],
+  "tetris": [
+    {"pos": [0, 0], "shape": [[0,0],[1,0],[2,0]], "negative": false},
+    {"pos": [0, 1], "shape": [[0,0],[1,0],[2,0]], "negative": false},
+    {"pos": [0, 2], "shape": [[0,0],[1,0],[2,0]], "negative": false}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "width": 4,
+  "height": 4,
+  "starts": [[0, 4]],
+  "ends": [[4, 0]],
+  "squares": [
+    {"pos": [0, 0], "color": 1},
+    {"pos": [1, 0], "color": 1},
+    {"pos": [2, 0], "color": 2},
+    {"pos": [3, 0], "color": 2}
+  ],
+  "triangles": [
+    {"pos": [1, 3], "count": 2}
+  ],
+  "node_dots": [[2, 2]],
+  "edge_dots": [[[0, 4], [1, 4]]]
+}

@@ -1,0 +1,28 @@
+{
+  "width": 6,
+  "height": 6,
+  "starts": [[0, 6]],
+  "ends": [[6, 0]],
+  "squares": [
+    {"pos": [0, 0], "color": 1},
+    {"pos": [3, 0], "color": 2},
+    {"pos": [5, 0], "color": 1},
+    {"pos": [1, 2], "color": 2},
+    {"pos": [4, 2], "color": 1},
+    {"pos": [0, 4], "color": 1},
+    {"pos": [2, 4], "color": 2},
+    {"pos": [5, 4], "color": 2},
+    {"pos": [1, 5], "color": 1},
+    {"pos": [4, 5], "color": 2}
+  ],
+  "stars": [
+    {"pos": [2, 1], "color": 1},
+    {"pos": [3, 3], "color": 2}
+  ],
+  "triangles": [
+    {"pos": [5, 1], "count": 2},
+    {"pos": [0, 3], "count": 1},
+    {"pos": [3, 5], "count": 3}
+  ],
+  "node_dots": [[3, 3], [3, 4]]
+}
