@@ -145,7 +145,7 @@ fn check_squares(g: &WitnessGraph, regions: &RegionMap) -> bool {
     true
 }
 
-fn check_squares_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool {
+pub(crate) fn check_squares_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool {
     let mut seen_color: Option<u8> = None;
     for (cx, cy) in regions.cells_in_region(r) {
         if let CellConstraint::Square { color } = g.cell(cx, cy) {
@@ -170,7 +170,7 @@ fn check_stars(g: &WitnessGraph, regions: &RegionMap) -> bool {
     true
 }
 
-fn check_stars_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool {
+pub(crate) fn check_stars_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool {
     let mut color_count = [0u8; 16];
     let mut has_star = [false; 16];
 

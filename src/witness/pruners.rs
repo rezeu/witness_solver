@@ -1,5 +1,7 @@
 use crate::solver::Pruner;
-use crate::witness::graph::WitnessGraph;
+use crate::witness::graph::{CellConstraint, WitnessGraph};
+use crate::witness::region::compute_regions;
+use crate::witness::rules::{check_squares_in_region, check_stars_in_region};
 use crate::witness::state::WitnessState;
 
 /// Prune if the head can no longer reach the end node through unvisited nodes
@@ -159,6 +161,76 @@ impl Pruner<WitnessState> for TrianglePruner {
         }
         false
     }
+}
+
+/// Prune by detecting cell-regions that are already "closed" — meaning no
+/// future move can split them — and validating square/star color rules on
+/// them mid-search instead of waiting for the full path.
+///
+/// A region R is closed iff every internal edge of R has both grid-node
+/// endpoints unreachable from `state.head`. Sound because a future split
+/// requires the path to traverse some internal edge, which requires reaching
+/// at least one of its endpoints.
+pub struct ClosedRegionPruner;
+
+impl Pruner<WitnessState> for ClosedRegionPruner {
+    fn should_prune(&self, s: &WitnessState, g: &WitnessGraph) -> bool {
+        let reachable = compute_reachable(s, g);
+        let regions = compute_regions(s, g);
+
+        // Mark which regions are closed. Iterate every cell; for any internal
+        // edge (between two same-region cells), if either endpoint is
+        // reachable the region is open. We only need to check Right and Down
+        // edges to cover all internal edges exactly once.
+        let mut closed = [true; 256];
+        let w = g.width;
+        let h = g.height;
+        for cy in 0..h {
+            for cx in 0..w {
+                let r = regions.cell_region(cx, cy) as usize;
+                if !closed[r] {
+                    continue;
+                }
+                // Right neighbor — internal edge is v_edge(cx+1, cy)
+                if cx + 1 < w && regions.cell_region(cx + 1, cy) as usize == r {
+                    let n1 = g.node_xy_to_idx(cx + 1, cy);
+                    let n2 = g.node_xy_to_idx(cx + 1, cy + 1);
+                    if bit_test(&reachable, n1) || bit_test(&reachable, n2) {
+                        closed[r] = false;
+                        continue;
+                    }
+                }
+                // Down neighbor — internal edge is h_edge(cx, cy+1)
+                if cy + 1 < h && regions.cell_region(cx, cy + 1) as usize == r {
+                    let n1 = g.node_xy_to_idx(cx, cy + 1);
+                    let n2 = g.node_xy_to_idx(cx + 1, cy + 1);
+                    if bit_test(&reachable, n1) || bit_test(&reachable, n2) {
+                        closed[r] = false;
+                    }
+                }
+            }
+        }
+
+        for r in 0..regions.count {
+            if !closed[r as usize] {
+                continue;
+            }
+            if !check_squares_in_region(g, &regions, r) {
+                return true;
+            }
+            if !check_stars_in_region(g, &regions, r) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// True iff this graph has any square or star constraint.
+pub fn has_color_constraints(g: &WitnessGraph) -> bool {
+    g.cells.iter().any(|c| matches!(c,
+        CellConstraint::Square { .. } | CellConstraint::Star { .. }
+    ))
 }
 
 // --- tiny bitset on [u64; 4] (256 bits, stack-allocated) ------------------

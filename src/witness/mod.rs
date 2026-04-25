@@ -11,7 +11,8 @@ use crate::solver::{PrunerChain, run_parallel_dfs, run_dfs};
 use graph::WitnessGraph;
 use state::WitnessState;
 use rules::WitnessValidator;
-use pruners::{ReachabilityPruner, DotReachabilityPruner, TrianglePruner};
+use pruners::{ReachabilityPruner, DotReachabilityPruner, TrianglePruner, ClosedRegionPruner, has_color_constraints};
+use graph::CellConstraint;
 
 pub fn solve_file(path: &str, parallel: bool, profile: bool) -> Result<(), Box<dyn std::error::Error>> {
     let graph = WitnessGraph::from_file(path)?;
@@ -28,6 +29,10 @@ pub fn solve_file(path: &str, parallel: bool, profile: bool) -> Result<(), Box<d
     };
     if !graph.triangle_cells.is_empty() {
         pruners = pruners.add(Box::new(TrianglePruner));
+    }
+    let has_eliminations = graph.cells.iter().any(|c| matches!(c, CellConstraint::Elimination));
+    if has_color_constraints(&graph) && !has_eliminations {
+        pruners = pruners.add(Box::new(ClosedRegionPruner));
     }
 
     let satisfiers = WitnessValidator::new(&graph);

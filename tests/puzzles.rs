@@ -1,7 +1,9 @@
 use witness_solver::solver::{PrunerChain, run_parallel_dfs};
 use witness_solver::witness::graph::WitnessGraph;
+use witness_solver::witness::graph::CellConstraint;
 use witness_solver::witness::pruners::{
-    DotReachabilityPruner, ReachabilityPruner, TrianglePruner,
+    has_color_constraints, ClosedRegionPruner, DotReachabilityPruner, ReachabilityPruner,
+    TrianglePruner,
 };
 use witness_solver::witness::rules::WitnessValidator;
 use witness_solver::witness::state::WitnessState;
@@ -17,6 +19,13 @@ fn solve(path: &str) -> Option<WitnessState> {
     };
     if !graph.triangle_cells.is_empty() {
         pruners = pruners.add(Box::new(TrianglePruner));
+    }
+    let has_eliminations = graph
+        .cells
+        .iter()
+        .any(|c| matches!(c, CellConstraint::Elimination));
+    if has_color_constraints(&graph) && !has_eliminations {
+        pruners = pruners.add(Box::new(ClosedRegionPruner));
     }
 
     let satisfiers = WitnessValidator::new(&graph);

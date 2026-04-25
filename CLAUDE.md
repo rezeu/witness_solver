@@ -69,13 +69,15 @@ All fields except width/height/starts/ends are optional. Coordinates: nodes are 
 
 ## Implemented vs Stubbed
 
-**Working**: line path, dots, colored squares, stars, triangles, tetris/polyomino tiling (positive and negative), elimination marks, reachability pruning, triangle early pruning, parallel DFS with profiling (`--profile` flag)
+**Working**: line path, dots, colored squares, stars, triangles, tetris/polyomino tiling (positive and negative), elimination marks, reachability pruning, triangle early pruning, closed-region early pruning, parallel DFS with profiling (`--profile` flag)
 **Stubbed (TODO)**: symmetry puzzles
 
 ## Performance
 
 - DFS with rayon work-stealing; `split_depth` controls parallelism granularity
 - Pre-computed adjacency list, reusable moves buffer, stack-allocated pruner BFS
+- `ClosedRegionPruner` validates square/star color constraints on regions that can no longer be split, instead of waiting for path completion — the dominant win on low-density square puzzles
 - `--profile` flag benchmarks sequential vs parallel at multiple split depths
-- 6x6 with constraints: ~90s sequential, ~4.5s parallel (20x speedup on 18 cores)
-- 7x7 with constraints: solves in ~7s parallel
+- Full integration test suite (15 puzzles): ~5s parallel
+- `stress_7x7` (7x7, low-density squares): ~1.2s parallel; ~13min sequential (parallel wins via work-stealing finding the solution faster)
+- `stress_mixed_6x6` and `hard_6x6`: sub-second parallel
