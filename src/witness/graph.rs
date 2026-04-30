@@ -468,3 +468,716 @@ impl WitnessGraph {
 // interior mutability, so it's safe to share across threads.
 unsafe impl Sync for WitnessGraph {}
 unsafe impl Send for WitnessGraph {}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Helpers -----------------------------------------------------------
+
+    /// Build a non-symmetry `w`×`h` puzzle (start at (0,0), end at (w,h)).
+    fn make_graph(w: usize, h: usize) -> WitnessGraph {
+        WitnessGraph::from_json(PuzzleJson {
+            width: w,
+            height: h,
+            starts: vec![[0, 0]],
+            ends: vec![[w, h]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap()
+    }
+
+    /// Build a symmetry puzzle with given kind.
+    fn make_symmetry_graph(sym: SymmetryKind, w: usize, h: usize) -> WitnessGraph {
+        WitnessGraph::from_json(PuzzleJson {
+            width: w,
+            height: h,
+            starts: vec![[0, 0]],
+            ends: vec![[w, h]],
+            symmetry: Some(sym),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap()
+    }
+
+    // =======================================================================
+    // Edge Indexing Tests
+    // =======================================================================
+
+    #[test]
+    fn test_h_edge_index_formula() {
+        let g = make_graph(4, 4);
+        // h_edge(x,y) = 2*(y*w + x) = 2*(4y + x)
+        assert_eq!(g.h_edge_index(0, 0), 0);
+        assert_eq!(g.h_edge_index(1, 0), 2);
+        assert_eq!(g.h_edge_index(2, 0), 4);
+        assert_eq!(g.h_edge_index(3, 0), 6);
+        assert_eq!(g.h_edge_index(0, 1), 8);
+        assert_eq!(g.h_edge_index(1, 2), 2 * (2 * 4 + 1));
+        assert_eq!(g.h_edge_index(3, 4), 2 * (4 * 4 + 3));
+
+        let g3 = make_graph(3, 3);
+        assert_eq!(g3.h_edge_index(0, 0), 0);
+        assert_eq!(g3.h_edge_index(1, 0), 2);
+        assert_eq!(g3.h_edge_index(2, 3), 22);
+    }
+
+    #[test]
+    fn test_v_edge_index_formula() {
+        let g = make_graph(4, 4);
+        // v_edge(x,y) = 2*(y*(w+1) + x) + 1 = 2*(5y + x) + 1
+        assert_eq!(g.v_edge_index(0, 0), 1);
+        assert_eq!(g.v_edge_index(1, 0), 3);
+        assert_eq!(g.v_edge_index(4, 0), 9);
+        assert_eq!(g.v_edge_index(0, 1), 11);
+        assert_eq!(g.v_edge_index(4, 3), 39);
+
+        let g3 = make_graph(3, 3);
+        assert_eq!(g3.v_edge_index(0, 0), 1);
+        assert_eq!(g3.v_edge_index(3, 0), 7);
+        assert_eq!(g3.v_edge_index(3, 2), 23);
+    }
+
+    #[test]
+    fn test_edge_indices_unique() {
+        // h_edge produces evens, v_edge produces odds — so they never collide.
+        let g = make_graph(4, 4);
+        for x in 0..4 {
+            for y in 0..4 {
+                let h = g.h_edge_index(x, y);
+                let v = g.v_edge_index(x, y);
+                assert_ne!(h, v, "h_edge({},{})={} collides with v_edge({},{})={}", x, y, h, x, y, v);
+                assert!(h % 2 == 0, "h_edge should be even, got {}", h);
+                assert!(v % 2 == 1, "v_edge should be odd, got {}", v);
+            }
+        }
+    }
+
+    #[test]
+    fn test_edge_indices_in_bounds() {
+        let g = make_graph(4, 4);
+        let max_h = g.h_edge_index(3, 4); // x=w-1=3, y=h=4
+        let max_v = g.v_edge_index(4, 3); // x=w=4, y=h-1=3
+        assert!(max_h < g.num_edge_slots());
+        assert!(max_v < g.num_edge_slots());
+        assert_eq!(g.num_edge_slots(), 50);
+        assert!(max_h == 38);
+        assert!(max_v == 39);
+    }
+
+    #[test]
+    fn test_edge_idx_to_endpoints_roundtrip() {
+        let g = make_graph(4, 4);
+        let (u, v) = g.edge_idx_to_endpoints(0);
+        assert_eq!(u, g.node_xy_to_idx(0, 0));
+        assert_eq!(v, g.node_xy_to_idx(1, 0));
+
+        let (u, v) = g.edge_idx_to_endpoints(38);
+        assert_eq!(u, g.node_xy_to_idx(3, 4));
+        assert_eq!(v, g.node_xy_to_idx(4, 4));
+
+        let (u, v) = g.edge_idx_to_endpoints(1);
+        assert_eq!(u, g.node_xy_to_idx(0, 0));
+        assert_eq!(v, g.node_xy_to_idx(0, 1));
+
+        let (u, v) = g.edge_idx_to_endpoints(39);
+        assert_eq!(u, g.node_xy_to_idx(4, 3));
+        assert_eq!(v, g.node_xy_to_idx(4, 4));
+    }
+
+    #[test]
+    fn test_edge_endpoints_to_idx_roundtrip() {
+        let g = make_graph(4, 4);
+        let u = g.node_xy_to_idx(0, 0);
+        let v = g.node_xy_to_idx(1, 0);
+        assert_eq!(g.edge_endpoints_to_idx(u, v), 0);
+        assert_eq!(g.edge_endpoints_to_idx(v, u), 0, "direction-agnostic");
+
+        let u = g.node_xy_to_idx(0, 0);
+        let v = g.node_xy_to_idx(0, 1);
+        assert_eq!(g.edge_endpoints_to_idx(u, v), 1);
+        assert_eq!(g.edge_endpoints_to_idx(v, u), 1);
+
+        let u = g.node_xy_to_idx(4, 3);
+        let v = g.node_xy_to_idx(4, 4);
+        assert_eq!(g.edge_endpoints_to_idx(u, v), 39);
+    }
+
+    #[test]
+    fn test_num_edge_slots() {
+        assert_eq!(make_graph(4, 4).num_edge_slots(), 2 * 5 * 5);
+        assert_eq!(make_graph(3, 3).num_edge_slots(), 2 * 4 * 4);
+        assert_eq!(make_graph(2, 2).num_edge_slots(), 2 * 3 * 3);
+        assert_eq!(make_graph(1, 1).num_edge_slots(), 2 * 2 * 2);
+        assert_eq!(make_graph(6, 6).num_edge_slots(), 2 * 7 * 7);
+    }
+
+    #[test]
+    fn test_valid_edge_indices_exhaustive() {
+        let g = make_graph(4, 4);
+        let num_nodes = g.num_nodes();
+        let num_slots = g.num_edge_slots();
+        // For 4×4: indices 0-39 are valid edges, 40-49 are padding.
+        for ei in 0..num_slots {
+            let (u, v) = g.edge_idx_to_endpoints(ei);
+            let roundtrip = g.edge_endpoints_to_idx(u, v);
+            assert_eq!(
+                roundtrip, ei,
+                "edge {} roundtripped to {} via endpoints ({},{})",
+                ei, roundtrip, u, v
+            );
+            // Valid edges have both endpoints in node range
+            let endpoints_valid = u < num_nodes && v < num_nodes;
+            let is_padding = ei >= 40;
+            assert_eq!(
+                endpoints_valid, !is_padding,
+                "edge {}: u={} v={} valid={} expected_valid={}",
+                ei, u, v, endpoints_valid, !is_padding
+            );
+        }
+    }
+
+    // =======================================================================
+    // Node Indexing Tests
+    // =======================================================================
+
+    #[test]
+    fn test_node_xy_to_idx() {
+        let g = make_graph(4, 4);
+        assert_eq!(g.node_xy_to_idx(0, 0), 0);
+        assert_eq!(g.node_xy_to_idx(1, 0), 1);
+        assert_eq!(g.node_xy_to_idx(4, 0), 4);
+        assert_eq!(g.node_xy_to_idx(0, 1), 5);
+        assert_eq!(g.node_xy_to_idx(4, 4), 24);
+        assert_eq!(g.node_xy_to_idx(2, 3), 3 * 5 + 2);
+    }
+
+    #[test]
+    fn test_node_idx_to_xy() {
+        let g = make_graph(4, 4);
+        assert_eq!(g.node_idx_to_xy(0), (0, 0));
+        assert_eq!(g.node_idx_to_xy(4), (4, 0));
+        assert_eq!(g.node_idx_to_xy(5), (0, 1));
+        assert_eq!(g.node_idx_to_xy(24), (4, 4));
+        assert_eq!(g.node_idx_to_xy(17), (2, 3));
+    }
+
+    #[test]
+    fn test_node_roundtrip() {
+        let g = make_graph(4, 4);
+        for ni in 0..g.num_nodes() {
+            let (x, y) = g.node_idx_to_xy(ni);
+            assert_eq!(g.node_xy_to_idx(x, y), ni);
+        }
+    }
+
+    #[test]
+    fn test_num_nodes() {
+        assert_eq!(make_graph(4, 4).num_nodes(), 5 * 5);
+        assert_eq!(make_graph(3, 3).num_nodes(), 4 * 4);
+        assert_eq!(make_graph(2, 2).num_nodes(), 3 * 3);
+        assert_eq!(make_graph(1, 1).num_nodes(), 2 * 2);
+        assert_eq!(make_graph(6, 6).num_nodes(), 7 * 7);
+    }
+
+    // =======================================================================
+    // Symmetry Tests
+    // =======================================================================
+
+    #[test]
+    fn test_symmetric_node_mirror_x() {
+        let g = make_symmetry_graph(SymmetryKind::MirrorX, 4, 4);
+        // Off-axis nodes mirror across x=2
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(4, 0));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(4, 0)).unwrap(), g.node_xy_to_idx(0, 0));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(1, 3)).unwrap(), g.node_xy_to_idx(3, 3));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 3)).unwrap(), g.node_xy_to_idx(1, 3));
+        // On-axis nodes (x=2) return None
+        assert!(g.symmetric_node(g.node_xy_to_idx(2, 0)).is_none());
+        assert!(g.symmetric_node(g.node_xy_to_idx(2, 4)).is_none());
+    }
+
+    #[test]
+    fn test_symmetric_node_mirror_y() {
+        let g = make_symmetry_graph(SymmetryKind::MirrorY, 4, 4);
+        // Off-axis nodes mirror across y=2
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(0, 4));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 4)).unwrap(), g.node_xy_to_idx(0, 0));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(), g.node_xy_to_idx(3, 3));
+        // On-axis nodes (y=2) return None
+        assert!(g.symmetric_node(g.node_xy_to_idx(0, 2)).is_none());
+        assert!(g.symmetric_node(g.node_xy_to_idx(4, 2)).is_none());
+    }
+
+    #[test]
+    fn test_symmetric_node_mirror_xy() {
+        let g = make_symmetry_graph(SymmetryKind::MirrorXY, 4, 4);
+        // Off-axis nodes mirror across (x=2, y=2)
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(4, 4));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(4, 4)).unwrap(), g.node_xy_to_idx(0, 0));
+        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(), g.node_xy_to_idx(1, 3));
+        // On-axis node (x=2, y=2) returns None
+        assert!(g.symmetric_node(g.node_xy_to_idx(2, 2)).is_none());
+        // Nodes on one axis but not both: off-axis
+        assert!(g.symmetric_node(g.node_xy_to_idx(2, 0)).is_some());
+        assert!(g.symmetric_node(g.node_xy_to_idx(0, 2)).is_some());
+    }
+
+    #[test]
+    fn test_symmetric_node_odd_grid() {
+        // 3×3 grid (w=3, odd): MirrorX axis runs between nodes, no integer x satisfies 2*x==3.
+        let g = make_symmetry_graph(SymmetryKind::MirrorX, 3, 3);
+        for node_idx in 0..g.num_nodes() {
+            let mirror = g
+                .symmetric_node(node_idx)
+                .expect("all nodes should have a mirror in odd-width MirrorX");
+            assert_ne!(
+                mirror, node_idx,
+                "node {} should NOT be self-symmetric (no on-axis nodes for odd width)",
+                node_idx
+            );
+        }
+    }
+
+    #[test]
+    fn test_symmetric_node_involution() {
+        let g = make_symmetry_graph(SymmetryKind::MirrorXY, 4, 4);
+        for node_idx in 0..g.num_nodes() {
+            if let Some(m) = g.symmetric_node(node_idx) {
+                assert_eq!(
+                    g.symmetric_node(m).unwrap(),
+                    node_idx,
+                    "mirror of mirror of node {} should be itself",
+                    node_idx
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_symmetric_node_no_symmetry() {
+        let g = make_graph(4, 4);
+        for node_idx in 0..g.num_nodes() {
+            assert!(
+                g.symmetric_node(node_idx).is_none(),
+                "no node should have a mirror when symmetry is None"
+            );
+        }
+    }
+
+    #[test]
+    fn test_symmetric_edge_mirror_x() {
+        let g = make_symmetry_graph(SymmetryKind::MirrorX, 4, 4);
+        let original = g.h_edge_index(0, 1);
+        let expected = g.h_edge_index(3, 1);
+        assert_eq!(g.symmetric_edge(original).unwrap(), expected);
+        assert_eq!(g.symmetric_edge(expected).unwrap(), original);
+
+        let original = g.v_edge_index(1, 1);
+        let expected = g.v_edge_index(3, 1);
+        assert_eq!(g.symmetric_edge(original).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_symmetric_edge_self_symmetric() {
+        // MirrorX 4×4: edge on the axis (v_edge at x=2) is self-symmetric.
+        let g = make_symmetry_graph(SymmetryKind::MirrorX, 4, 4);
+        for y in 0..4 {
+            let axis_edge = g.v_edge_index(2, y);
+            assert!(
+                g.symmetric_edge(axis_edge).is_none(),
+                "v_edge(2,{}) should be self-symmetric",
+                y
+            );
+        }
+    }
+
+    #[test]
+    fn test_symmetric_edge_no_symmetry() {
+        let g = make_graph(4, 4);
+        // All edges should be self-symmetric (no mirror) when symmetry is None.
+        for y in 0..4 {
+            for x in 0..4 {
+                assert!(g.symmetric_edge(g.h_edge_index(x, y)).is_none());
+                assert!(g.symmetric_edge(g.v_edge_index(x, y)).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_symmetric_edge_double_mirror() {
+        // Mirror of mirror edge should be the original edge (for off-axis edges).
+        let g = make_symmetry_graph(SymmetryKind::MirrorXY, 4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                let he = g.h_edge_index(x, y);
+                if let Some(m) = g.symmetric_edge(he) {
+                    assert_eq!(g.symmetric_edge(m).unwrap(), he,
+                        "double mirror of h_edge({},{}) should be itself", x, y);
+                }
+                let ve = g.v_edge_index(x, y);
+                if let Some(m) = g.symmetric_edge(ve) {
+                    assert_eq!(g.symmetric_edge(m).unwrap(), ve,
+                        "double mirror of v_edge({},{}) should be itself", x, y);
+                }
+            }
+        }
+    }
+
+    // =======================================================================
+    // End Node Tests
+    // =======================================================================
+
+    #[test]
+    fn test_all_end_nodes_no_symmetry() {
+        let g = make_graph(4, 4);
+        let ends = g.all_end_nodes();
+        assert_eq!(ends.len(), 2);
+        assert_eq!(ends[0], g.start);
+        assert_eq!(ends[1], g.end);
+    }
+
+    #[test]
+    fn test_all_end_nodes_mirror_x() {
+        // Symmetry: MirrorX, start=(0,0) off-axis, end=(4,4) off-axis
+        // Expect [start, end, mirror_start, mirror_end] (4 unique)
+        let g = make_symmetry_graph(SymmetryKind::MirrorX, 4, 4);
+        let ends = g.all_end_nodes();
+        assert_eq!(ends.len(), 4);
+        // Contains originals
+        assert!(ends.contains(&g.start));
+        assert!(ends.contains(&g.end));
+        // Contains mirrors
+        assert!(ends.contains(&g.symmetric_node(g.start).unwrap()));
+        assert!(ends.contains(&g.symmetric_node(g.end).unwrap()));
+    }
+
+    #[test]
+    fn test_all_end_nodes_start_on_axis() {
+        // MirrorX 4×4, start at (2,0) (on-axis), end at (4,2) (off-axis)
+        // Expect [start, end, start_dup, mirror_end] = 4 entries, start appears twice
+        let g = WitnessGraph::from_json(PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[2, 0]],
+            ends: vec![[4, 2]],
+            symmetry: Some(SymmetryKind::MirrorX),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap();
+
+        let ends = g.all_end_nodes();
+        assert_eq!(ends.len(), 4);
+        // start should appear twice (once as origin, once as mirror-of-self)
+        let start = g.node_xy_to_idx(2, 0);
+        let count_start = ends.iter().filter(|&&n| n == start).count();
+        assert_eq!(count_start, 2, "on-axis start should be duplicated");
+        // end should appear once, its mirror once
+        let end = g.node_xy_to_idx(4, 2);
+        let count_end = ends.iter().filter(|&&n| n == end).count();
+        assert_eq!(count_end, 1);
+        let mirror_end = g.symmetric_node(end).unwrap();
+        assert!(ends.contains(&mirror_end));
+    }
+
+    #[test]
+    fn test_all_end_nodes_end_on_axis() {
+        // MirrorX 4×4, start=(0,0) (off-axis), end=(2,4) (on-axis)
+        // Expect [start, end, mirror_start, end_dup] = 4 entries, end appears twice
+        let g = WitnessGraph::from_json(PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[2, 4]],
+            symmetry: Some(SymmetryKind::MirrorX),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap();
+
+        let ends = g.all_end_nodes();
+        assert_eq!(ends.len(), 4);
+        // end should appear twice
+        let end = g.node_xy_to_idx(2, 4);
+        let count_end = ends.iter().filter(|&&n| n == end).count();
+        assert_eq!(count_end, 2, "on-axis end should be duplicated");
+        // start appears once, its mirror once
+        let start = g.node_xy_to_idx(0, 0);
+        let count_start = ends.iter().filter(|&&n| n == start).count();
+        assert_eq!(count_start, 1);
+        let mirror_start = g.symmetric_node(start).unwrap();
+        assert!(ends.contains(&mirror_start));
+    }
+
+    // =======================================================================
+    // Misc Tests
+    // =======================================================================
+
+    #[test]
+    fn test_is_broken_default() {
+        let g = make_graph(4, 4);
+        // No broken_edges in the puzzle → nothing is broken
+        for ei in 0..40 {
+            assert!(!g.is_broken(ei), "edge {} should not be broken", ei);
+        }
+    }
+
+    #[test]
+    fn test_is_broken_with_edge() {
+        let g = WitnessGraph::from_json(PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[4, 4]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![[[0, 0], [1, 0]], [[2, 1], [2, 2]]],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap();
+
+        assert!(g.is_broken(g.h_edge_index(0, 0)));
+        assert!(g.is_broken(g.v_edge_index(2, 1)));
+        assert!(!g.is_broken(g.h_edge_index(1, 0)));
+        assert!(!g.is_broken(g.v_edge_index(0, 0)));
+    }
+
+    #[test]
+    fn test_cell_default() {
+        let g = make_graph(4, 4);
+        // All cells should be CellConstraint::None (the default)
+        for y in 0..4 {
+            for x in 0..4 {
+                let cell = g.cell(x, y);
+                assert!(matches!(cell, CellConstraint::None),
+                    "cell({},{}) should be None, got {:?}", x, y, cell);
+            }
+        }
+    }
+
+    #[test]
+    fn test_send_sync() {
+        fn _assert_send<T: Send>() {}
+        fn _assert_sync<T: Sync>() {}
+        // Compile-time checks — if these don't compile, WitnessGraph broke thread-safety
+        _assert_send::<WitnessGraph>();
+        _assert_sync::<WitnessGraph>();
+    }
+
+    // =======================================================================
+    // PuzzleJson Tests
+    // =======================================================================
+
+    #[test]
+    fn test_puzzle_json_default() {
+        // Minimal valid PuzzleJson parses successfully
+        let g = WitnessGraph::from_json(PuzzleJson {
+            width: 1,
+            height: 1,
+            starts: vec![[0, 0]],
+            ends: vec![[1, 1]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        })
+        .unwrap();
+        assert_eq!(g.width, 1);
+        assert_eq!(g.height, 1);
+        assert!(g.symmetry.is_none());
+    }
+
+    #[test]
+    fn test_puzzle_json_symmetry() {
+        let jx: PuzzleJson = serde_json::from_str(
+            r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]],"symmetry":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(jx.symmetry, Some(SymmetryKind::MirrorX));
+
+        let jy: PuzzleJson = serde_json::from_str(
+            r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]],"symmetry":"y"}"#,
+        )
+        .unwrap();
+        assert_eq!(jy.symmetry, Some(SymmetryKind::MirrorY));
+
+        let jxy: PuzzleJson = serde_json::from_str(
+            r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]],"symmetry":"xy"}"#,
+        )
+        .unwrap();
+        assert_eq!(jxy.symmetry, Some(SymmetryKind::MirrorXY));
+
+        let jnone: PuzzleJson = serde_json::from_str(
+            r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]]}"#,
+        )
+        .unwrap();
+        assert_eq!(jnone.symmetry, None);
+    }
+
+    #[test]
+    fn test_from_json_invalid_grid() {
+        // Empty starts → error
+        let err = WitnessGraph::from_json(PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![],
+            ends: vec![[4, 4]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        });
+        assert!(err.is_err());
+
+        // Empty ends → error
+        let err = WitnessGraph::from_json(PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        });
+        assert!(err.is_err());
+    }
+
+    // =======================================================================
+    // Verification / Integration Tests
+    // =======================================================================
+
+    #[test]
+    fn test_h_edge_endpoints_match_formula() {
+        let g = make_graph(4, 4);
+        for y in 0..=4 {
+            for x in 0..4 {
+                let ei = g.h_edge_index(x, y);
+                let (u, v) = g.edge_idx_to_endpoints(ei);
+                assert_eq!(u, g.node_xy_to_idx(x, y));
+                assert_eq!(v, g.node_xy_to_idx(x + 1, y));
+            }
+        }
+    }
+
+    #[test]
+    fn test_v_edge_endpoints_match_formula() {
+        let g = make_graph(4, 4);
+        for y in 0..4 {
+            for x in 0..=4 {
+                let ei = g.v_edge_index(x, y);
+                let (u, v) = g.edge_idx_to_endpoints(ei);
+                assert_eq!(u, g.node_xy_to_idx(x, y));
+                assert_eq!(v, g.node_xy_to_idx(x, y + 1));
+            }
+        }
+    }
+
+    #[test]
+    fn test_full_edge_roundtrip() {
+        let g = make_graph(4, 4);
+        // For every valid edge, edge_endpoints_to_idx on its endpoints = the edge index
+        let last_h = g.h_edge_index(3, 4);
+        let last_v = g.v_edge_index(4, 3);
+        for ei in 0..=usize::max(last_h, last_v) {
+            let (u, v) = g.edge_idx_to_endpoints(ei);
+            // Only check edges with valid endpoints (skip padding)
+            if u < g.num_nodes() && v < g.num_nodes() {
+                assert_eq!(
+                    g.edge_endpoints_to_idx(u, v), ei,
+                    "roundtrip failed for edge {}", ei
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_full_node_roundtrip() {
+        let g = make_graph(4, 4);
+        for x in 0..=4 {
+            for y in 0..=4 {
+                let ni = g.node_xy_to_idx(x, y);
+                assert_eq!(g.node_idx_to_xy(ni), (x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_edges_match_formula() {
+        // Verify that every h_edge and v_edge produced by the formulas
+        // correctly roundtrips through edge_idx_to_endpoints and back.
+        let g = make_graph(4, 4);
+        for y in 0..=4 {
+            for x in 0..4 {
+                let ei = g.h_edge_index(x, y);
+                let (u, v) = g.edge_idx_to_endpoints(ei);
+                assert_eq!(
+                    g.edge_endpoints_to_idx(u, v), ei,
+                    "h_edge({},{}): roundtrip mismatch", x, y
+                );
+            }
+        }
+        for y in 0..4 {
+            for x in 0..=4 {
+                let ei = g.v_edge_index(x, y);
+                let (u, v) = g.edge_idx_to_endpoints(ei);
+                assert_eq!(
+                    g.edge_endpoints_to_idx(u, v), ei,
+                    "v_edge({},{}): roundtrip mismatch", x, y
+                );
+            }
+        }
+    }
+}
