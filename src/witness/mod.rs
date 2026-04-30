@@ -7,7 +7,7 @@ pub mod debug_draw;
 
 use std::time::Instant;
 
-use crate::solver::{PrunerChain, run_parallel_dfs, run_dfs};
+use crate::solver::{DfsStats, Pruner, PrunerChain, Satisfier, run_parallel_dfs, run_dfs};
 use graph::WitnessGraph;
 use state::WitnessState;
 use rules::WitnessValidator;
@@ -22,18 +22,7 @@ pub fn solve_file(path: &str, parallel: bool, profile: bool) -> Result<(), Box<d
     graph.draw_with_state(None);
 
     // Build pruner chain
-    let mut pruners = if graph.dot_nodes.is_empty() && graph.dot_edges.is_empty() {
-        PrunerChain::new().add(Box::new(ReachabilityPruner))
-    } else {
-        PrunerChain::new().add(Box::new(DotReachabilityPruner))
-    };
-    if !graph.triangle_cells.is_empty() {
-        pruners = pruners.add(Box::new(TrianglePruner));
-    }
-    let has_eliminations = graph.cells.iter().any(|c| matches!(c, CellConstraint::Elimination));
-    if has_color_constraints(&graph) && !has_eliminations {
-        pruners = pruners.add(Box::new(ClosedRegionPruner));
-    }
+    let pruners = build_pruner_chain(&graph);
 
     let satisfiers = WitnessValidator::new(&graph);
 
@@ -69,6 +58,36 @@ pub fn solve_file(path: &str, parallel: bool, profile: bool) -> Result<(), Box<d
     }
 
     Ok(())
+}
+
+pub fn build_pruner_chain(graph: &WitnessGraph) -> PrunerChain<WitnessState> {
+    let mut pruners = if graph.dot_nodes.is_empty() && graph.dot_edges.is_empty() {
+        PrunerChain::new().add(Box::new(ReachabilityPruner))
+    } else {
+        PrunerChain::new().add(Box::new(DotReachabilityPruner))
+    };
+    if !graph.triangle_cells.is_empty() {
+        pruners = pruners.add(Box::new(TrianglePruner));
+    }
+    let has_eliminations = graph.cells.iter().any(|c| matches!(c, CellConstraint::Elimination));
+    if has_color_constraints(&graph) && !has_eliminations {
+        pruners = pruners.add(Box::new(ClosedRegionPruner));
+    }
+    pruners
+}
+
+pub fn solve(
+    graph: &WitnessGraph,
+    initial: WitnessState,
+    pruners: &impl Pruner<WitnessState>,
+    satisfiers: &impl Satisfier<WitnessState>,
+    parallel: bool,
+) -> (Option<WitnessState>, DfsStats) {
+    if parallel {
+        run_parallel_dfs(graph, initial, pruners, satisfiers, 3)
+    } else {
+        run_dfs(graph, initial, pruners, satisfiers)
+    }
 }
 
 fn run_profile<P, Q>(
