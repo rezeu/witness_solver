@@ -172,3 +172,99 @@ impl SearchState for WitnessState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::solver::UndoStack;
+    use crate::witness::graph::{PuzzleJson, SymmetryKind, WitnessGraph};
+
+    fn make_symmetry_graph() -> WitnessGraph {
+        let json = PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[4, 2]],
+            symmetry: Some(SymmetryKind::MirrorX),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    #[test]
+    fn self_symmetric_edge_counts_once() {
+        let graph = make_symmetry_graph();
+        let mv = graph.v_edge_index(2, 0);
+        assert!(graph.symmetric_edge(mv).is_none());
+        let mut state = WitnessState::new(&graph);
+        state.head = graph.node_xy_to_idx(2, 0);
+        state.degrees[graph.start] = 0;
+        state.degrees[state.head] = 0;
+        let mut undo = UndoStack::new();
+        state.apply_move(&graph, mv, &mut undo);
+        let (u, v) = graph.edge_idx_to_endpoints(mv);
+        assert!(state.used(mv));
+        assert_eq!(state.degrees[u], 1);
+        assert_eq!(state.degrees[v], 1);
+    }
+
+    #[test]
+    fn axis_collision_degree_is_two() {
+        let graph = make_symmetry_graph();
+        let mut state = WitnessState::new(&graph);
+        let mut undo = UndoStack::new();
+
+        state.apply_move(&graph, graph.h_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(2, 0), &mut undo);
+
+        let axis_node = graph.node_xy_to_idx(2, 0);
+        assert_eq!(state.degrees[axis_node], 2);
+    }
+
+    #[test]
+    fn is_end_node_recognizes_mirror_end() {
+        let graph = make_symmetry_graph();
+        let state = WitnessState::new(&graph);
+        assert!(state.is_end_node(&graph, graph.end));
+        let mirror_end = graph.symmetric_node(graph.end).unwrap();
+        assert!(state.is_end_node(&graph, mirror_end));
+        let mirror_start = graph.symmetric_node(graph.start).unwrap();
+        assert!(state.is_end_node(&graph, mirror_start));
+        let mid = graph.node_xy_to_idx(2, 1);
+        assert!(!state.is_end_node(&graph, mid));
+    }
+
+    #[test]
+    fn broken_edge_blocks_both_player_and_mirror() {
+        let json = PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[4, 2]],
+            symmetry: Some(SymmetryKind::MirrorX),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![[[0, 0], [1, 0]]],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        let graph = WitnessGraph::from_json(json).unwrap();
+        let state = WitnessState::new(&graph);
+        let player_edge = graph.h_edge_index(0, 0);
+        assert!(graph.is_broken(player_edge));
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+        assert!(!moves.contains(&player_edge));
+    }
+}

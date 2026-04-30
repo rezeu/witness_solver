@@ -56,55 +56,10 @@ puzzle_test!(stress_mixed_6x6, "puzzles/stress_mixed_6x6.json");
 // Run explicitly with `cargo test --release -- --ignored`.
 puzzle_test!(stress_7x7, "puzzles/stress_7x7.json", ignore);
 
-// ---------------------------------------------------------------------------
-// Symmetry test — documents what needs to change in the validator.
-// ---------------------------------------------------------------------------
-//
-// The current solver finds a path that ignores the symmetry constraint.
-// This test checks that the solution respects X-axis mirror symmetry.
-// It FAILS because the unmodified solver doesn't enforce symmetry.
-//
-// SYMMETRY VALIDATOR CHANGES NEEDED:
-// - check_degrees: expects 2 nodes with degree=1, symmetry has 4
-//   (player start/end + mirror start/end)
-// - gen_moves: only allows revisiting ctx.end; symmetry needs revisiting
-//   both ends (player end + mirror end)
-// - is_satisfied: checks head==end; with symmetry, both head==end AND
-//   mirror_head==mirror_end must be true
-// - check_dots: all dots must have degree>0; with mirror path, some dot
-//   nodes may be unreachable by the player path alone
-//
-// Once T14-T18 are complete, replace with:
-//   puzzle_test!(symmetry_x_4x4, "puzzles/symmetry_x_4x4.json");
-// and remove #[ignore].
-/// Test that symmetry puzzles fail with the unmodified solver.
-/// The solver finds a path that is internally consistent but does
-/// not respect the symmetry constraint.
-#[ignore]
+puzzle_test!(symmetry_x_4x4, "puzzles/symmetry_x_4x4.json");
+
 #[test]
-fn symmetry_x_4x4() {
-    let graph = WitnessGraph::from_file("puzzles/symmetry_x_4x4.json")
-        .expect("load symmetry puzzle");
-    assert!(graph.symmetry.is_some(), "expected x-symmetry");
-
-    let solution = solve("puzzles/symmetry_x_4x4.json");
-    assert!(solution.is_some(), "expected a solution");
-    let s = solution.unwrap();
-
-    // Verify mirror-symmetry: every off-axis edge must have its mirror
-    // edge traversed. The current solver ignores symmetry, so this
-    // assertion FAILS for non-trivial paths.
-    let num_slots = graph.num_edge_slots();
-    for ei in 0..num_slots {
-        if s.used(ei) {
-            if let Some(mirror_ei) = graph.symmetric_edge(ei) {
-                assert!(
-                    s.used(mirror_ei),
-                    "SYMMETRY VIOLATION: edge {} used but its mirror {} is not",
-                    ei,
-                    mirror_ei,
-                );
-            }
-        }
-    }
+fn symmetry_unsolvable() {
+    let result = solve("puzzles/symmetry_unsolvable.json");
+    assert!(result.is_none(), "unsolvable symmetry puzzle should return None");
 }
