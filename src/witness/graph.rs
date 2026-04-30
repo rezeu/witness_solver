@@ -401,6 +401,29 @@ impl WitnessGraph {
             }
         }
     }
+
+    /// If the puzzle has symmetry, return the mirror edge for `ei`.
+    /// Returns `None` when the edge is self-symmetric (lies on the symmetry axis).
+    pub fn symmetric_edge(&self, ei: usize) -> Option<usize> {
+        let (u, v) = self.edge_idx_to_endpoints(ei);
+        let mu = self.symmetric_node(u);
+        let mv = self.symmetric_node(v);
+
+        // Both endpoints on-axis → edge is fully on-axis → self-symmetric
+        if mu.is_none() && mv.is_none() {
+            return None;
+        }
+
+        let mu = mu.unwrap_or(u);
+        let mv = mv.unwrap_or(v);
+
+        // Mirrored endpoints same as original → self-symmetric
+        if mu == u && mv == v {
+            return None;
+        }
+
+        Some(self.edge_endpoints_to_idx(mu, mv))
+    }
 }
 
 // Safety: WitnessGraph is immutable after construction and contains no
