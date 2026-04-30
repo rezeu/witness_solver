@@ -27,7 +27,18 @@ pub struct PuzzleJson {
     pub tetris: Vec<TetrisJson>,
     #[serde(default)]
     pub eliminations: Vec<[usize; 2]>,
-    // symmetry: reserved for future
+    #[serde(default)]
+    pub symmetry: Option<SymmetryKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum SymmetryKind {
+    #[serde(rename = "x")]
+    MirrorX,
+    #[serde(rename = "y")]
+    MirrorY,
+    #[serde(rename = "xy")]
+    MirrorXY,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +105,7 @@ pub struct WitnessGraph {
     /// Pre-computed adjacency: adj[node] = ([neighbor; 4], count).
     /// Avoids division/modulo in hot paths (gen_moves, pruner BFS).
     pub adj: Vec<([usize; 4], u8)>,
+    pub symmetry: Option<SymmetryKind>,
 }
 
 // --- Bitset helpers (small, for broken-edge set) --------------------------
@@ -253,6 +265,7 @@ impl WitnessGraph {
             has_region_rules,
             triangle_cells,
             adj,
+            symmetry: j.symmetry,
         })
     }
 
@@ -357,6 +370,35 @@ impl WitnessGraph {
         let (neighbors, count) = &self.adj[u];
         for i in 0..*count as usize {
             f(neighbors[i]);
+        }
+    }
+    /// If the puzzle has symmetry, return the mirror node for `ni`.
+    /// Returns `None` when the node is on the symmetry axis (self-symmetric).
+    pub fn symmetric_node(&self, ni: usize) -> Option<usize> {
+        let kind = self.symmetry?;
+        let (x, y) = self.node_idx_to_xy(ni);
+        match kind {
+            SymmetryKind::MirrorX => {
+                if 2 * x == self.width {
+                    None
+                } else {
+                    Some(self.node_xy_to_idx(self.width - x, y))
+                }
+            }
+            SymmetryKind::MirrorY => {
+                if 2 * y == self.height {
+                    None
+                } else {
+                    Some(self.node_xy_to_idx(x, self.height - y))
+                }
+            }
+            SymmetryKind::MirrorXY => {
+                if 2 * x == self.width && 2 * y == self.height {
+                    None
+                } else {
+                    Some(self.node_xy_to_idx(self.width - x, self.height - y))
+                }
+            }
         }
     }
 }

@@ -1,0 +1,7 @@
+{
+  "width": 4,
+  "height": 4,
+  "starts": [[0, 2]],
+  "ends": [[4, 2]],
+  "symmetry": "x"
+}
