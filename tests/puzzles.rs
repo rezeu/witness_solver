@@ -1,35 +1,14 @@
-use witness_solver::solver::{PrunerChain, run_parallel_dfs};
+use witness_solver::witness::build_pruner_chain;
 use witness_solver::witness::graph::WitnessGraph;
-use witness_solver::witness::graph::CellConstraint;
-use witness_solver::witness::pruners::{
-    has_color_constraints, ClosedRegionPruner, DotReachabilityPruner, ReachabilityPruner,
-    TrianglePruner,
-};
 use witness_solver::witness::rules::WitnessValidator;
 use witness_solver::witness::state::WitnessState;
 
 fn solve(path: &str) -> Option<WitnessState> {
     let graph = WitnessGraph::from_file(path).expect("load puzzle");
     let initial = WitnessState::new(&graph);
-
-    let mut pruners = if graph.dot_nodes.is_empty() && graph.dot_edges.is_empty() {
-        PrunerChain::new().add(Box::new(ReachabilityPruner))
-    } else {
-        PrunerChain::new().add(Box::new(DotReachabilityPruner))
-    };
-    if !graph.triangle_cells.is_empty() {
-        pruners = pruners.add(Box::new(TrianglePruner));
-    }
-    let has_eliminations = graph
-        .cells
-        .iter()
-        .any(|c| matches!(c, CellConstraint::Elimination));
-    if has_color_constraints(&graph) && !has_eliminations {
-        pruners = pruners.add(Box::new(ClosedRegionPruner));
-    }
-
+    let pruners = build_pruner_chain(&graph);
     let satisfiers = WitnessValidator::new(&graph);
-    let (sol, _stats) = run_parallel_dfs(&graph, initial, &pruners, &satisfiers, 3);
+    let (sol, _stats) = witness_solver::witness::solve(&graph, initial, &pruners, &satisfiers, true);
     sol
 }
 
