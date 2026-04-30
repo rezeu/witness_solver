@@ -10,56 +10,8 @@ use std::time::Instant;
 use crate::solver::{DfsStats, Pruner, PrunerChain, Satisfier, run_parallel_dfs, run_dfs};
 use graph::WitnessGraph;
 use state::WitnessState;
-use rules::WitnessValidator;
 use pruners::{ReachabilityPruner, DotReachabilityPruner, TrianglePruner, ClosedRegionPruner, has_color_constraints};
 use graph::CellConstraint;
-
-pub fn solve_file(path: &str, parallel: bool, profile: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let graph = WitnessGraph::from_file(path)?;
-    let initial = WitnessState::new(&graph);
-
-    println!("Puzzle: {}x{}", graph.width, graph.height);
-    graph.draw_with_state(None);
-
-    // Build pruner chain
-    let pruners = build_pruner_chain(&graph);
-
-    let satisfiers = WitnessValidator::new(&graph);
-
-    if profile {
-        let report = run_profile_bench(&graph, initial, &pruners, &satisfiers);
-        report.display(&graph);
-    } else {
-        let start = Instant::now();
-
-        let (solution, stats) = if parallel {
-            run_parallel_dfs(&graph, initial, &pruners, &satisfiers, 3)
-        } else {
-            run_dfs(&graph, initial, &pruners, &satisfiers)
-        };
-
-        let elapsed = start.elapsed();
-
-        match solution {
-            Some(s) => {
-                println!("Solved!");
-                graph.draw_with_state(Some(&s));
-            }
-            None => {
-                println!("No solution found.");
-            }
-        }
-
-        println!(
-            "Explored {} nodes in {:.3}s ({:.0} nodes/s)",
-            stats.node_count(),
-            elapsed.as_secs_f64(),
-            stats.node_count() as f64 / elapsed.as_secs_f64()
-        );
-    }
-
-    Ok(())
-}
 
 pub fn build_pruner_chain(graph: &WitnessGraph) -> PrunerChain<WitnessState> {
     let mut pruners = if graph.dot_nodes.is_empty() && graph.dot_edges.is_empty() {
