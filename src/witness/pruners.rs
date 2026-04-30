@@ -226,6 +226,113 @@ impl Pruner<WitnessState> for ClosedRegionPruner {
     }
 }
 
+/// Dual-source BFS: computes the set of nodes reachable from both the player
+/// head and its mirror (if the puzzle has symmetry and the head is off-axis).
+/// Used by both SymmetryReachabilityPruner and SymmetryDotPruner.
+fn dual_compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
+    let mirror_end = g.symmetric_node(g.end);
+
+    let mut reachable = [0u64; 4];
+    let mut stack_buf = [0usize; 289];
+
+    // Source 1: player head
+    bit_set(&mut reachable, s.head);
+    stack_buf[0] = s.head;
+    let mut sp: usize = 1;
+
+    // Source 2: mirror head (if off-axis and distinct)
+    if let Some(mh) = g.symmetric_node(s.head) {
+        if mh != s.head && !bit_test(&reachable, mh) {
+            bit_set(&mut reachable, mh);
+            stack_buf[sp] = mh;
+            sp += 1;
+        }
+    }
+
+    while sp > 0 {
+        sp -= 1;
+        let u = stack_buf[sp];
+        let (neighbors, count) = &g.adj[u];
+
+        for i in 0..*count as usize {
+            let v = neighbors[i];
+            if bit_test(&reachable, v) {
+                continue;
+            }
+            // End nodes can have degree > 0 (paths can terminate there)
+            let is_end = v == g.end || mirror_end.map_or(false, |me| v == me);
+            if s.degrees[v] > 0 && !is_end {
+                continue;
+            }
+            let ei = g.edge_endpoints_to_idx(u, v);
+            if s.used(ei) || g.is_broken(ei) {
+                continue;
+            }
+            bit_set(&mut reachable, v);
+            stack_buf[sp] = v;
+            sp += 1;
+        }
+    }
+
+    reachable
+}
+
+/// Prune if either the player end or the mirror end is unreachable from
+/// the dual heads (player + mirror) through unvisited/unused/unbroken edges.
+/// Only active for symmetry puzzles.
+pub struct SymmetryReachabilityPruner;
+
+impl Pruner<WitnessState> for SymmetryReachabilityPruner {
+    fn should_prune(&self, s: &WitnessState, g: &WitnessGraph) -> bool {
+        let reachable = dual_compute_reachable(s, g);
+
+        // Player end must be reachable
+        if !bit_test(&reachable, g.end) {
+            return true;
+        }
+
+        // Mirror end must be reachable (if not on-axis)
+        if let Some(me) = g.symmetric_node(g.end) {
+            if !bit_test(&reachable, me) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+/// Prune if any unvisited black dot node is unreachable from EITHER the
+/// player path OR the mirror path in a symmetry puzzle.
+/// Does NOT handle colored dots (blue/yellow) — that is deferred to P3.1.
+pub struct SymmetryDotPruner;
+
+impl Pruner<WitnessState> for SymmetryDotPruner {
+    fn should_prune(&self, s: &WitnessState, g: &WitnessGraph) -> bool {
+        let reachable = dual_compute_reachable(s, g);
+
+        // Both ends must be reachable
+        if !bit_test(&reachable, g.end) {
+            return true;
+        }
+        if let Some(me) = g.symmetric_node(g.end) {
+            if !bit_test(&reachable, me) {
+                return true;
+            }
+        }
+
+        // All unvisited dot nodes must be reachable via dual-source BFS
+        // TODO: colored dot support (P3.1)
+        for &ni in &g.dot_nodes {
+            if s.degrees[ni] == 0 && !bit_test(&reachable, ni) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
 /// True iff this graph has any square or star constraint.
 pub fn has_color_constraints(g: &WitnessGraph) -> bool {
     g.cells.iter().any(|c| matches!(c,

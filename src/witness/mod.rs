@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::solver::{DfsStats, Pruner, PrunerChain, Satisfier, run_parallel_dfs, run_dfs};
 use graph::WitnessGraph;
 use state::WitnessState;
-use pruners::{ReachabilityPruner, DotReachabilityPruner, TrianglePruner, ClosedRegionPruner, has_color_constraints};
+use pruners::{ReachabilityPruner, DotReachabilityPruner, TrianglePruner, ClosedRegionPruner, has_color_constraints, SymmetryReachabilityPruner, SymmetryDotPruner};
 use graph::CellConstraint;
 
 pub fn build_pruner_chain(graph: &WitnessGraph) -> PrunerChain<WitnessState> {
@@ -21,6 +21,13 @@ pub fn build_pruner_chain(graph: &WitnessGraph) -> PrunerChain<WitnessState> {
     };
     if !graph.triangle_cells.is_empty() {
         pruners = pruners.add(Box::new(TrianglePruner));
+    }
+    // Symmetry pruners
+    if graph.symmetry.is_some() {
+        pruners = pruners.add(Box::new(SymmetryReachabilityPruner));
+        if !graph.dot_nodes.is_empty() {
+            pruners = pruners.add(Box::new(SymmetryDotPruner));
+        }
     }
     let has_eliminations = graph.cells.iter().any(|c| matches!(c, CellConstraint::Elimination));
     if has_color_constraints(&graph) && !has_eliminations {
