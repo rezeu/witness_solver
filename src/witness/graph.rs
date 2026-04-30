@@ -424,6 +424,44 @@ impl WitnessGraph {
 
         Some(self.edge_endpoints_to_idx(mu, mv))
     }
+
+    /// Return all path endpoint node indices for this puzzle.
+    /// For non-symmetry: [start, end]. For symmetry: [start, end, mirror_start, mirror_end],
+    /// with duplicates when a node serves as both player and mirror endpoint
+    /// (self-symmetric on-axis nodes), so that the degree check can expect
+    /// degree 1 for unique endpoints and degree 2 for double-role endpoints.
+    pub fn all_end_nodes(&self) -> Vec<usize> {
+        let mut nodes = vec![self.start, self.end];
+        if self.symmetry.is_some() {
+            // Mirror start
+            match self.symmetric_node(self.start) {
+                Some(ms) => {
+                    if !nodes.contains(&ms) {
+                        nodes.push(ms);
+                    }
+                }
+                None => {
+                    // self.start is on the symmetry axis: it serves as both
+                    // player start and mirror start → expect degree 2
+                    nodes.push(self.start);
+                }
+            }
+            // Mirror end
+            match self.symmetric_node(self.end) {
+                Some(me) => {
+                    if !nodes.contains(&me) {
+                        nodes.push(me);
+                    }
+                }
+                None => {
+                    // self.end is on the symmetry axis: it serves as both
+                    // player end and mirror end → expect degree 2
+                    nodes.push(self.end);
+                }
+            }
+        }
+        nodes
+    }
 }
 
 // Safety: WitnessGraph is immutable after construction and contains no

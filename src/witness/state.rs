@@ -59,6 +59,27 @@ impl WitnessState {
     pub fn used(&self, ei: usize) -> bool {
         test_bit(&self.used_edges, ei)
     }
+
+    /// Return true if `ni` is a valid path terminus (can have degree 1).
+    /// For symmetry: both player's end and mirror's end (and mirror's start) count.
+    pub fn is_end_node(&self, graph: &WitnessGraph, ni: usize) -> bool {
+        if ni == graph.end {
+            return true;
+        }
+        if graph.symmetry.is_some() {
+            if let Some(me) = graph.symmetric_node(graph.end) {
+                if ni == me {
+                    return true;
+                }
+            }
+            if let Some(ms) = graph.symmetric_node(graph.start) {
+                if ni == ms {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 impl SearchState for WitnessState {
@@ -67,20 +88,35 @@ impl SearchState for WitnessState {
     type Ctx = WitnessGraph;
 
     fn gen_moves(&self, ctx: &WitnessGraph, out: &mut Vec<Self::Move>) {
-        // If already at the end, no further moves.
         if self.head == ctx.end {
             return;
         }
         let head = self.head;
         ctx.for_each_neighbor(head, |v| {
             let ei = ctx.edge_endpoints_to_idx(head, v);
-            // Edge must be unused, not broken, and target unvisited (or is the end).
-            if !self.used(ei)
-                && !ctx.is_broken(ei)
-                && (self.degrees[v] == 0 || v == ctx.end)
-            {
-                out.push(ei);
+
+            if self.used(ei) || ctx.is_broken(ei) {
+                return;
             }
+            if self.degrees[v] != 0 && !self.is_end_node(ctx, v) {
+                return;
+            }
+
+            if ctx.symmetry.is_some() {
+                if let Some(me) = ctx.symmetric_edge(ei) {
+                    if self.used(me) || ctx.is_broken(me) {
+                        return;
+                    }
+                    let (m_u, m_v) = ctx.edge_idx_to_endpoints(me);
+                    let mirror_head = ctx.symmetric_node(head).unwrap_or(head);
+                    let mirror_target = if m_u == mirror_head { m_v } else { m_u };
+                    if self.degrees[mirror_target] != 0 && !self.is_end_node(ctx, mirror_target) {
+                        return;
+                    }
+                }
+            }
+
+            out.push(ei);
         });
     }
 

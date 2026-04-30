@@ -78,9 +78,12 @@ impl Satisfier<WitnessState> for WitnessValidator {
 // ---------------------------------------------------------------------------
 
 fn check_degrees(s: &WitnessState, g: &WitnessGraph) -> bool {
+    let end_nodes = g.all_end_nodes();
     for (i, &d) in s.degrees.iter().enumerate() {
-        if i == g.start || i == g.end {
-            if d != 1 {
+        let count = end_nodes.iter().filter(|&&n| n == i).count();
+        if count > 0 {
+            // Endpoint: count=1 unique, count=2 self-symmetric on-axis.
+            if d != count as u8 {
                 return false;
             }
         } else if d != 0 && d != 2 {
