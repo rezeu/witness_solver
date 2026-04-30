@@ -241,12 +241,10 @@ fn dual_compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
     let mut sp: usize = 1;
 
     // Source 2: mirror head (if off-axis and distinct)
-    if let Some(mh) = g.symmetric_node(s.head) {
-        if mh != s.head && !bit_test(&reachable, mh) {
-            bit_set(&mut reachable, mh);
-            stack_buf[sp] = mh;
-            sp += 1;
-        }
+    if let Some(mh) = g.symmetric_node(s.head) && mh != s.head && !bit_test(&reachable, mh) {
+        bit_set(&mut reachable, mh);
+        stack_buf[sp] = mh;
+        sp += 1;
     }
 
     while sp > 0 {
@@ -254,13 +252,12 @@ fn dual_compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
         let u = stack_buf[sp];
         let (neighbors, count) = &g.adj[u];
 
-        for i in 0..*count as usize {
-            let v = neighbors[i];
+        for &v in neighbors.iter().take(*count as usize) {
             if bit_test(&reachable, v) {
                 continue;
             }
             // End nodes can have degree > 0 (paths can terminate there)
-            let is_end = v == g.end || mirror_end.map_or(false, |me| v == me);
+            let is_end = v == g.end || mirror_end == Some(v);
             if s.degrees[v] > 0 && !is_end {
                 continue;
             }
@@ -292,10 +289,8 @@ impl Pruner<WitnessState> for SymmetryReachabilityPruner {
         }
 
         // Mirror end must be reachable (if not on-axis)
-        if let Some(me) = g.symmetric_node(g.end) {
-            if !bit_test(&reachable, me) {
-                return true;
-            }
+        if let Some(me) = g.symmetric_node(g.end) && !bit_test(&reachable, me) {
+            return true;
         }
 
         false
@@ -315,10 +310,8 @@ impl Pruner<WitnessState> for SymmetryDotPruner {
         if !bit_test(&reachable, g.end) {
             return true;
         }
-        if let Some(me) = g.symmetric_node(g.end) {
-            if !bit_test(&reachable, me) {
-                return true;
-            }
+        if let Some(me) = g.symmetric_node(g.end) && !bit_test(&reachable, me) {
+            return true;
         }
 
         // All unvisited dot nodes must be reachable via dual-source BFS

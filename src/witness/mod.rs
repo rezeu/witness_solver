@@ -30,7 +30,7 @@ pub fn build_pruner_chain(graph: &WitnessGraph) -> PrunerChain<WitnessState> {
         }
     }
     let has_eliminations = graph.cells.iter().any(|c| matches!(c, CellConstraint::Elimination));
-    if has_color_constraints(&graph) && !has_eliminations {
+    if has_color_constraints(graph) && !has_eliminations {
         pruners = pruners.add(Box::new(ClosedRegionPruner));
     }
     pruners
