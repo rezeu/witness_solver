@@ -176,8 +176,9 @@ impl SearchState for WitnessState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::UndoStack;
+    use crate::solver::{Satisfier, UndoStack};
     use crate::witness::graph::{PuzzleJson, SymmetryKind, WitnessGraph};
+    use crate::witness::rules::WitnessValidator;
 
     fn make_symmetry_graph() -> WitnessGraph {
         let json = PuzzleJson {
@@ -266,5 +267,232 @@ mod tests {
         let mut moves = Vec::new();
         state.gen_moves(&graph, &mut moves);
         assert!(!moves.contains(&player_edge));
+    }
+
+    // -----------------------------------------------------------------------
+    // Non-symmetry: gen_moves, apply/undo, is_satisfied
+    // -----------------------------------------------------------------------
+
+    /// Build a simple 2×2 non-symmetry puzzle (start at (0,0), end at (2,2)).
+    fn make_graph() -> WitnessGraph {
+        let json = PuzzleJson {
+            width: 2,
+            height: 2,
+            starts: vec![[0, 0]],
+            ends: vec![[2, 2]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    #[test]
+    fn gen_moves_initial() {
+        let graph = make_graph();
+        // Start at (0,0)=node 0. Neighbors: right=node 1 (h_edge(0,0)=0),
+        // down=node 3 (v_edge(0,0)=1). Both should be generated.
+        let state = WitnessState::new(&graph);
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+        moves.sort();
+        assert_eq!(moves, vec![0, 1]);
+    }
+
+    #[test]
+    fn gen_moves_broken_edge_excluded() {
+        // Break h_edge(0,0) — the rightward move from start.
+        let json = PuzzleJson {
+            width: 2,
+            height: 2,
+            starts: vec![[0, 0]],
+            ends: vec![[2, 2]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![[[0, 0], [1, 0]]],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        let graph = WitnessGraph::from_json(json).unwrap();
+        let state = WitnessState::new(&graph);
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+        // Only v_edge(0,0)=1 (down) should be generated
+        assert_eq!(moves, vec![1]);
+    }
+
+    #[test]
+    fn gen_moves_used_edge_excluded() {
+        let graph = make_graph();
+        let mut state = WitnessState::new(&graph);
+        let mut undo = UndoStack::new();
+
+        // Move right: (0,0) → (1,0) via h_edge(0,0)=0
+        state.apply_move(&graph, graph.h_edge_index(0, 0), &mut undo);
+
+        // Head is now at node 1. h_edge(0,0) is used, so it must NOT appear.
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+
+        assert!(!moves.contains(&0), "used edge 0 should be excluded");
+        assert!(moves.contains(&2), "h_edge(1,0)=2 should be generated");
+        assert!(moves.contains(&3), "v_edge(1,0)=3 should be generated");
+    }
+
+    #[test]
+    fn gen_moves_can_revisit_end() {
+        let graph = make_graph();
+        // End node (2,2) already has degree 1 (visited via another path).
+        // Head is at (1,2)=node 7, adjacent to end. The edge to end
+        // (h_edge(1,2)=10) is NOT used — it should still be generated
+        // because end nodes can always be revisited.
+        let mut state = WitnessState::new(&graph);
+        state.head = graph.node_xy_to_idx(1, 2); // node 7
+        state.degrees[graph.end] = 1; // end was "visited" before
+
+        let edge_to_end = graph.h_edge_index(1, 2);
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+
+        assert!(
+            moves.contains(&edge_to_end),
+            "move to end (edge {}) should be generated despite end degree > 0",
+            edge_to_end
+        );
+    }
+
+    #[test]
+    fn gen_moves_cannot_revisit_non_end() {
+        let graph = make_graph();
+        let mut state = WitnessState::new(&graph);
+        let mut undo = UndoStack::new();
+
+        // Build a path that leaves a visited non-end node behind:
+        // (0,0)→(1,0)→(2,0)→(2,1)→(1,1)
+        state.apply_move(&graph, graph.h_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(2, 0), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 1), &mut undo);
+
+        // Head is now at (1,1)=node 4. Node 1=(1,0) has degree 2 and is NOT an end node.
+        // v_edge(1,0)=3 connecting node 4→node 1 is unused — it should be excluded.
+        let mut moves = Vec::new();
+        state.gen_moves(&graph, &mut moves);
+
+        let edge_back = graph.v_edge_index(1, 0); // = 3
+        assert!(
+            !moves.contains(&edge_back),
+            "edge back to non-end visited node (edge {}) should be excluded",
+            edge_back
+        );
+    }
+
+    #[test]
+    fn apply_move_undo_roundtrip() {
+        let graph = make_graph();
+        let mut state = WitnessState::new(&graph);
+        let original = state.clone();
+        let mut undo = UndoStack::new();
+
+        state.apply_move(&graph, graph.h_edge_index(0, 0), &mut undo);
+
+        undo.rollback(&mut state);
+
+        assert_eq!(state.used_edges, original.used_edges);
+        assert_eq!(state.degrees, original.degrees);
+        assert_eq!(state.head, original.head);
+    }
+
+    #[test]
+    fn apply_undo_cycles() {
+        let graph = make_graph();
+        let mut state = WitnessState::new(&graph);
+        let original = state.clone();
+
+        // ---- First cycle: 4 moves ----
+        let mut undo = UndoStack::new();
+        state.apply_move(&graph, graph.h_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(2, 0), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 1), &mut undo);
+        // Undo each move in reverse order (rollback pops one mark at a time)
+        undo.rollback(&mut state);
+        undo.rollback(&mut state);
+        undo.rollback(&mut state);
+        undo.rollback(&mut state);
+        assert_eq!(
+            state.used_edges, original.used_edges,
+            "first cycle: used_edges corrupted"
+        );
+        assert_eq!(
+            state.degrees, original.degrees,
+            "first cycle: degrees corrupted"
+        );
+        assert_eq!(
+            state.head, original.head,
+            "first cycle: head corrupted"
+        );
+
+        // ---- Second cycle: different path ----
+        let mut undo = UndoStack::new();
+        state.apply_move(&graph, graph.v_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(0, 1), &mut undo);
+        undo.rollback(&mut state);
+        undo.rollback(&mut state);
+        assert_eq!(
+            state.used_edges, original.used_edges,
+            "second cycle: used_edges corrupted"
+        );
+        assert_eq!(
+            state.degrees, original.degrees,
+            "second cycle: degrees corrupted"
+        );
+        assert_eq!(
+            state.head, original.head,
+            "second cycle: head corrupted"
+        );
+    }
+
+    #[test]
+    fn is_satisfied_head_at_end() {
+        let graph = make_graph();
+        let validator = WitnessValidator::new(&graph);
+        let mut state = WitnessState::new(&graph);
+        let mut undo = UndoStack::new();
+
+        // Build a complete valid path from (0,0) to (2,2):
+        // (0,0)→(0,1)→(0,2)→(1,2)→(2,2)
+        state.apply_move(&graph, graph.v_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(0, 1), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(0, 2), &mut undo);
+        state.apply_move(&graph, graph.h_edge_index(1, 2), &mut undo);
+
+        assert_eq!(state.head, graph.end);
+        assert!(validator.is_satisfied(&state, &graph));
+    }
+
+    #[test]
+    fn is_satisfied_head_not_at_end() {
+        let graph = make_graph();
+        let validator = WitnessValidator::new(&graph);
+        let mut state = WitnessState::new(&graph);
+        let mut undo = UndoStack::new();
+
+        // Partial path: (0,0)→(0,1)→(0,2) — head has NOT reached end yet
+        state.apply_move(&graph, graph.v_edge_index(0, 0), &mut undo);
+        state.apply_move(&graph, graph.v_edge_index(0, 1), &mut undo);
+
+        assert_ne!(state.head, graph.end);
+        assert!(!validator.is_satisfied(&state, &graph));
     }
 }

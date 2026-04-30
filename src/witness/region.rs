@@ -1,4 +1,6 @@
 use crate::witness::graph::WitnessGraph;
+#[cfg(test)]
+use crate::witness::graph::PuzzleJson;
 use crate::witness::state::WitnessState;
 
 pub struct RegionMap {
@@ -84,5 +86,72 @@ pub fn compute_regions(s: &WitnessState, g: &WitnessGraph) -> RegionMap {
         labels,
         count: region_id,
         width: w,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_graph(w: usize, h: usize) -> WitnessGraph {
+        let json = PuzzleJson {
+            width: w,
+            height: h,
+            starts: vec![[0, 0]],
+            ends: vec![[w, h]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    fn set_used(state: &mut WitnessState, ei: usize) {
+        let w = ei >> 6;
+        let b = ei & 63;
+        state.used_edges[w] |= 1u64 << b;
+    }
+
+    #[test]
+    fn test_all_same_region() {
+        let g = make_graph(3, 3);
+        let s = WitnessState::new(&g);
+        let regions = compute_regions(&s, &g);
+        assert_eq!(regions.count, 1);
+        for &label in &regions.labels {
+            assert_eq!(label, 0);
+        }
+    }
+
+    #[test]
+    fn test_path_creates_two_regions() {
+        let g = make_graph(3, 3);
+        let mut s = WitnessState::new(&g);
+        set_used(&mut s, g.v_edge_index(1, 0));
+        set_used(&mut s, g.v_edge_index(1, 1));
+        set_used(&mut s, g.v_edge_index(1, 2));
+        let regions = compute_regions(&s, &g);
+        assert_eq!(regions.count, 2);
+        let left_count = regions.cells_in_region(0).count();
+        let right_count = regions.cells_in_region(1).count();
+        assert_eq!(left_count, 3);
+        assert_eq!(right_count, 6);
+    }
+
+    #[test]
+    fn test_used_edge_separates_cells() {
+        let g = make_graph(2, 2);
+        let mut s = WitnessState::new(&g);
+        set_used(&mut s, g.h_edge_index(0, 1));
+        set_used(&mut s, g.v_edge_index(1, 0));
+        set_used(&mut s, g.v_edge_index(1, 1));
+        let regions = compute_regions(&s, &g);
+        assert_ne!(regions.cell_region(0, 0), regions.cell_region(0, 1));
     }
 }

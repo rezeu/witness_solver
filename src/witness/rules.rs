@@ -1,5 +1,7 @@
 use crate::solver::Satisfier;
 use crate::witness::graph::{CellConstraint, WitnessGraph};
+#[cfg(test)]
+use crate::witness::graph::{PuzzleJson, SymmetryKind};
 use crate::witness::region::{compute_regions, RegionMap};
 use crate::witness::state::WitnessState;
 
@@ -458,4 +460,134 @@ fn check_regions_with_elimination(
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::witness::state::WitnessState;
+
+    fn make_graph(w: usize, h: usize) -> WitnessGraph {
+        let json = PuzzleJson {
+            width: w,
+            height: h,
+            starts: vec![[0, 0]],
+            ends: vec![[w, h]],
+            symmetry: None,
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    fn make_symmetry_graph() -> WitnessGraph {
+        let json = PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[4, 4]],
+            symmetry: Some(SymmetryKind::MirrorX),
+            node_dots: vec![],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    fn make_dot_graph() -> WitnessGraph {
+        let json = PuzzleJson {
+            width: 4,
+            height: 4,
+            starts: vec![[0, 0]],
+            ends: vec![[4, 4]],
+            symmetry: None,
+            node_dots: vec![[2, 2]],
+            edge_dots: vec![],
+            broken_edges: vec![],
+            squares: vec![],
+            stars: vec![],
+            triangles: vec![],
+            tetris: vec![],
+            eliminations: vec![],
+        };
+        WitnessGraph::from_json(json).unwrap()
+    }
+
+    #[test]
+    fn check_degrees_valid() {
+        let g = make_graph(4, 4);
+        let mut s = WitnessState::new(&g);
+        s.degrees[g.start] = 1;
+        s.degrees[g.end] = 1;
+        assert!(super::check_degrees(&s, &g));
+    }
+
+    #[test]
+    fn check_degrees_start_degree_2_fails() {
+        let g = make_graph(4, 4);
+        let mut s = WitnessState::new(&g);
+        s.degrees[g.start] = 2;
+        s.degrees[g.end] = 1;
+        assert!(!super::check_degrees(&s, &g));
+    }
+
+    #[test]
+    fn check_degrees_unknown_degree_1_fails() {
+        let g = make_graph(4, 4);
+        let mut s = WitnessState::new(&g);
+        s.degrees[g.start] = 1;
+        s.degrees[g.end] = 1;
+        let mid = g.node_xy_to_idx(1, 1);
+        s.degrees[mid] = 1;
+        assert!(!super::check_degrees(&s, &g));
+    }
+
+    #[test]
+    fn check_dots_all_visited() {
+        let g = make_dot_graph();
+        let mut s = WitnessState::new(&g);
+        let dot = g.node_xy_to_idx(2, 2);
+        s.degrees[dot] = 2;
+        assert!(super::check_dots(&s, &g));
+    }
+
+    #[test]
+    fn check_dots_unreachable() {
+        let g = make_dot_graph();
+        let s = WitnessState::new(&g);
+        assert!(!super::check_dots(&s, &g));
+    }
+
+    #[test]
+    fn check_degrees_symmetry_4_endpoints() {
+        let g = make_symmetry_graph();
+        let mut s = WitnessState::new(&g);
+        let ends = g.all_end_nodes();
+        for &ni in &ends {
+            s.degrees[ni] = 1;
+        }
+        assert!(super::check_degrees(&s, &g));
+    }
+
+    #[test]
+    fn check_degrees_symmetry_mirror_end_missing() {
+        let g = make_symmetry_graph();
+        let mut s = WitnessState::new(&g);
+        let ends = g.all_end_nodes();
+        for (i, &ni) in ends.iter().enumerate() {
+            s.degrees[ni] = if i < ends.len() - 1 { 1 } else { 0 };
+        }
+        assert!(!super::check_degrees(&s, &g));
+    }
 }
