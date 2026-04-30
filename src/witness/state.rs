@@ -129,10 +129,28 @@ impl SearchState for WitnessState {
         undo.push(UndoEntry::ClearEdgeBit { edge_index: mv });
         set_bit(&mut self.used_edges, mv);
 
-        undo.push(UndoEntry::DecDeg { node_index: u });
         self.degrees[u] += 1;
-        undo.push(UndoEntry::DecDeg { node_index: v });
+        undo.push(UndoEntry::DecDeg { node_index: u });
         self.degrees[v] += 1;
+        undo.push(UndoEntry::DecDeg { node_index: v });
+
+        if let Some(me) = ctx.symmetric_edge(mv) {
+            if me != mv {
+                debug_assert!(!test_bit(&self.used_edges, me));
+                undo.push(UndoEntry::ClearEdgeBit { edge_index: me });
+                set_bit(&mut self.used_edges, me);
+
+                let (m_u, m_v) = ctx.edge_idx_to_endpoints(me);
+                if m_u != u && m_u != v {
+                    self.degrees[m_u] += 1;
+                    undo.push(UndoEntry::DecDeg { node_index: m_u });
+                }
+                if m_v != u && m_v != v {
+                    self.degrees[m_v] += 1;
+                    undo.push(UndoEntry::DecDeg { node_index: m_v });
+                }
+            }
+        }
 
         debug_assert!(
             self.head == u || self.head == v,
