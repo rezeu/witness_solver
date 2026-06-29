@@ -72,3 +72,4 @@ The `docs/` directory is organized as a project-report source:
 - [Puzzle JSON Format](docs/puzzle-format.md)
 - [Experiments](docs/experiments.md)
 - [Screenshots](docs/screenshots/README.md)
+- [Course Report](docs/course-report.md)
