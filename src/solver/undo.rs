@@ -22,6 +22,11 @@ impl<S: SearchState> UndoStack<S> {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    #[inline]
     pub fn push(&mut self, entry: S::UndoEntry) {
         self.stack.push(entry);
     }
@@ -38,5 +43,11 @@ impl<S: SearchState> UndoStack<S> {
                 state.apply_undo(e);
             }
         }
+    }
+}
+
+impl<S: SearchState> Default for UndoStack<S> {
+    fn default() -> Self {
+        Self::new()
     }
 }

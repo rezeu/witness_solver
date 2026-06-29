@@ -1,0 +1,10 @@
+{
+  "width": 3,
+  "height": 3,
+  "starts": [[0, 3]],
+  "ends": [[3, 0]],
+  "sun_cells": [
+    {"pos": [0, 1], "color": 1},
+    {"pos": [1, 1], "color": 1}
+  ]
+}

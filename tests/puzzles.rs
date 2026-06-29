@@ -8,7 +8,8 @@ fn solve(path: &str) -> Option<WitnessState> {
     let initial = WitnessState::new(&graph);
     let pruners = build_pruner_chain(&graph);
     let satisfiers = WitnessValidator::new(&graph);
-    let (sol, _stats) = witness_solver::witness::solve(&graph, initial, &pruners, &satisfiers, true);
+    let (sol, _stats) =
+        witness_solver::witness::solve(&graph, initial, &pruners, &satisfiers, true, 3);
     sol
 }
 
@@ -16,22 +17,14 @@ macro_rules! puzzle_test {
     ($name:ident, $file:expr) => {
         #[test]
         fn $name() {
-            assert!(
-                solve($file).is_some(),
-                "expected a solution for {}",
-                $file
-            );
+            assert!(solve($file).is_some(), "expected a solution for {}", $file);
         }
     };
     ($name:ident, $file:expr, ignore) => {
         #[test]
         #[ignore]
         fn $name() {
-            assert!(
-                solve($file).is_some(),
-                "expected a solution for {}",
-                $file
-            );
+            assert!(solve($file).is_some(), "expected a solution for {}", $file);
         }
     };
 }
@@ -57,11 +50,36 @@ puzzle_test!(stress_mixed_6x6, "puzzles/stress_mixed_6x6.json");
 puzzle_test!(stress_7x7, "puzzles/stress_7x7.json", ignore);
 
 puzzle_test!(symmetry_x_4x4, "puzzles/symmetry_x_4x4.json");
+puzzle_test!(symmetry_y_4x4, "puzzles/symmetry_y_4x4.json");
+puzzle_test!(symmetry_xy_4x4, "puzzles/symmetry_xy_4x4.json");
 
 #[test]
 fn symmetry_unsolvable() {
     let result = solve("puzzles/symmetry_unsolvable.json");
-    assert!(result.is_none(), "unsolvable symmetry puzzle should return None");
+    assert!(
+        result.is_none(),
+        "unsolvable symmetry puzzle should return None"
+    );
+}
+
+#[test]
+fn tetris_unsolvable() {
+    let result = solve("puzzles/tetris_unsolvable_3x3.json");
+    assert!(
+        result.is_none(),
+        "unsolvable tetris puzzle should return None"
+    );
+}
+
+puzzle_test!(minimal_1x1, "puzzles/minimal_1x1.json");
+puzzle_test!(sun_3x3, "puzzles/sun_3x3.json");
+puzzle_test!(colored_dots_2x2, "puzzles/colored_dots_2x2.json");
+puzzle_test!(tetris_rotate_2x2, "puzzles/tetris_rotate_2x2.json");
+
+#[test]
+fn sun_unsolvable() {
+    let result = solve("puzzles/sun_unsolvable_3x3.json");
+    assert!(result.is_none(), "single sun should be unsolvable");
 }
 
 fn solve_seq(path: &str) -> Option<WitnessState> {
@@ -69,7 +87,8 @@ fn solve_seq(path: &str) -> Option<WitnessState> {
     let initial = WitnessState::new(&graph);
     let pruners = build_pruner_chain(&graph);
     let satisfiers = WitnessValidator::new(&graph);
-    let (sol, _stats) = witness_solver::witness::solve(&graph, initial, &pruners, &satisfiers, false);
+    let (sol, _stats) =
+        witness_solver::witness::solve(&graph, initial, &pruners, &satisfiers, false, 3);
     sol
 }
 
@@ -96,7 +115,15 @@ const PUZZLES: &[&str] = &[
     "puzzles/hard_6x6.json",
     "puzzles/stress_mixed_6x6.json",
     "puzzles/symmetry_x_4x4.json",
+    "puzzles/symmetry_y_4x4.json",
+    "puzzles/symmetry_xy_4x4.json",
     "puzzles/symmetry_unsolvable.json",
+    "puzzles/tetris_unsolvable_3x3.json",
+    "puzzles/minimal_1x1.json",
+    "puzzles/sun_3x3.json",
+    "puzzles/sun_unsolvable_3x3.json",
+    "puzzles/colored_dots_2x2.json",
+    "puzzles/tetris_rotate_2x2.json",
 ];
 
 #[test]
@@ -110,11 +137,13 @@ fn sequential_equals_parallel() {
             (Some(s), Some(p)) => {
                 assert!(
                     is_valid_solution(&graph, s),
-                    "sequential solution for {} is invalid", path
+                    "sequential solution for {} is invalid",
+                    path
                 );
                 assert!(
                     is_valid_solution(&graph, p),
-                    "parallel solution for {} is invalid", path
+                    "parallel solution for {} is invalid",
+                    path
                 );
             }
             _ => panic!(

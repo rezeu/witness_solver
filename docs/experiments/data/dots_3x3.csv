@@ -1,0 +1,6 @@
+mode,split_depth,elapsed_secs,nodes,pruned,pruner_hits,work_items,solved,pruner_profile
+sequential,,0.000013721,12,0,dots:0,1,true,all
+parallel,2,0.001071879,13,0,dots:0,4,true,all
+parallel,3,0.000245752,16,0,dots:0,10,true,all
+parallel,4,0.000307189,25,0,dots:0,22,true,all
+parallel,5,0.000329017,47,2,dots:2,48,true,all

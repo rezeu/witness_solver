@@ -1,11 +1,11 @@
-pub mod state;
+pub mod dfs;
 pub mod pruner;
 pub mod satisfier;
+pub mod state;
 pub mod undo;
-pub mod dfs;
 
-pub use state::SearchState;
-pub use pruner::{Pruner, PrunerChain};
+pub use dfs::{DfsStats, run_dfs, run_parallel_dfs};
+pub use pruner::{Pruner, PrunerChain, PrunerHitStats};
 pub use satisfier::{Satisfier, SatisfierChain};
+pub use state::SearchState;
 pub use undo::UndoStack;
-pub use dfs::{run_dfs, run_parallel_dfs, DfsStats};

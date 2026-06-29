@@ -20,6 +20,9 @@ fn make_4x4_graph() -> WitnessGraph {
         triangles: vec![],
         tetris: vec![],
         eliminations: vec![],
+        sun_cells: vec![],
+        colored_node_dots: vec![],
+        colored_edge_dots: vec![],
     };
     WitnessGraph::from_json(json).unwrap()
 }
@@ -83,7 +86,10 @@ proptest! {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         let graph = WitnessGraph::from_json(json).unwrap();
         let state = WitnessState::new(&graph);

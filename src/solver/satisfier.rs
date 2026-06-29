@@ -14,9 +14,15 @@ impl<S: SearchState> SatisfierChain<S> {
         Self { rules: Vec::new() }
     }
 
-    pub fn add(mut self, p: Box<dyn Satisfier<S>>) -> Self {
+    pub fn with(mut self, p: Box<dyn Satisfier<S>>) -> Self {
         self.rules.push(p);
         self
+    }
+}
+
+impl<S: SearchState> Default for SatisfierChain<S> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

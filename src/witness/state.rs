@@ -1,5 +1,6 @@
 use crate::solver::{SearchState, UndoStack};
 use crate::witness::graph::WitnessGraph;
+use crate::witness::types::{EdgeId, NodeId};
 
 // ---------------------------------------------------------------------------
 // Bitset helpers for used_edges
@@ -34,19 +35,19 @@ fn clear_bit(bits: &mut [u64], i: usize) {
 pub struct WitnessState {
     pub used_edges: Vec<u64>,
     pub degrees: Vec<u8>,
-    pub head: usize,
+    pub head: NodeId,
 }
 
 pub enum UndoEntry {
-    ClearEdgeBit { edge_index: usize },
-    DecDeg { node_index: usize },
-    Head { prev: usize },
+    ClearEdgeBit { edge_index: EdgeId },
+    DecDeg { node_index: NodeId },
+    Head { prev: NodeId },
 }
 
 impl WitnessState {
     pub fn new(g: &WitnessGraph) -> Self {
         let num_slots = g.num_edge_slots();
-        let used_edges = vec![0u64; (num_slots + 63) / 64];
+        let used_edges = vec![0u64; num_slots.div_ceil(64)];
         let degrees = vec![0u8; g.num_nodes()];
         WitnessState {
             used_edges,
@@ -62,15 +63,19 @@ impl WitnessState {
 
     /// Return true if `ni` is a valid path terminus (can have degree 1).
     /// For symmetry: both player's end and mirror's end (and mirror's start) count.
-    pub fn is_end_node(&self, graph: &WitnessGraph, ni: usize) -> bool {
+    pub fn is_end_node(&self, graph: &WitnessGraph, ni: NodeId) -> bool {
         if ni == graph.end {
             return true;
         }
         if graph.symmetry.is_some() {
-            if let Some(me) = graph.symmetric_node(graph.end) && ni == me {
+            if let Some(me) = graph.symmetric_node(graph.end)
+                && ni == me
+            {
                 return true;
             }
-            if let Some(ms) = graph.symmetric_node(graph.start) && ni == ms {
+            if let Some(ms) = graph.symmetric_node(graph.start)
+                && ni == ms
+            {
                 return true;
             }
         }
@@ -79,7 +84,7 @@ impl WitnessState {
 }
 
 impl SearchState for WitnessState {
-    type Move = usize; // edge index
+    type Move = EdgeId; // edge index
     type UndoEntry = UndoEntry;
     type Ctx = WitnessGraph;
 
@@ -88,6 +93,7 @@ impl SearchState for WitnessState {
             return;
         }
         let head = self.head;
+        let moves_start = out.len();
         ctx.for_each_neighbor(head, |v| {
             let ei = ctx.edge_endpoints_to_idx(head, v);
 
@@ -98,7 +104,9 @@ impl SearchState for WitnessState {
                 return;
             }
 
-            if ctx.symmetry.is_some() && let Some(me) = ctx.symmetric_edge(ei) {
+            if ctx.symmetry.is_some()
+                && let Some(me) = ctx.symmetric_edge(ei)
+            {
                 if self.used(me) || ctx.is_broken(me) {
                     return;
                 }
@@ -111,6 +119,30 @@ impl SearchState for WitnessState {
             }
 
             out.push(ei);
+        });
+
+        let end_xy = ctx.node_idx_to_xy(ctx.end);
+        out[moves_start..].sort_by_key(|&ei| {
+            let (u, v) = ctx.edge_idx_to_endpoints(ei);
+            let target = if u == head { v } else { u };
+            let target_xy = ctx.node_idx_to_xy(target);
+            let dot_priority = if ctx.dot_edges.contains(&ei)
+                || ctx
+                    .colored_dot_edges
+                    .iter()
+                    .any(|&(dot_ei, _)| dot_ei == ei)
+                || ctx.dot_nodes.contains(&target)
+                || ctx
+                    .colored_dot_nodes
+                    .iter()
+                    .any(|&(dot_node, _)| dot_node == target)
+            {
+                0usize
+            } else {
+                1usize
+            };
+            let end_distance = target_xy.0.abs_diff(end_xy.0) + target_xy.1.abs_diff(end_xy.1);
+            (dot_priority, end_distance, ei)
         });
     }
 
@@ -128,7 +160,9 @@ impl SearchState for WitnessState {
         self.degrees[v] += 1;
         undo.push(UndoEntry::DecDeg { node_index: v });
 
-        if let Some(me) = ctx.symmetric_edge(mv) && me != mv {
+        if let Some(me) = ctx.symmetric_edge(mv)
+            && me != mv
+        {
             debug_assert!(!test_bit(&self.used_edges, me));
             undo.push(UndoEntry::ClearEdgeBit { edge_index: me });
             set_bit(&mut self.used_edges, me);
@@ -186,7 +220,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         WitnessGraph::from_json(json).unwrap()
     }
@@ -250,7 +287,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         let graph = WitnessGraph::from_json(json).unwrap();
         let state = WitnessState::new(&graph);
@@ -280,7 +320,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         WitnessGraph::from_json(json).unwrap()
     }
@@ -313,7 +356,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         let graph = WitnessGraph::from_json(json).unwrap();
         let state = WitnessState::new(&graph);
@@ -430,10 +476,7 @@ mod tests {
             state.degrees, original.degrees,
             "first cycle: degrees corrupted"
         );
-        assert_eq!(
-            state.head, original.head,
-            "first cycle: head corrupted"
-        );
+        assert_eq!(state.head, original.head, "first cycle: head corrupted");
 
         // ---- Second cycle: different path ----
         let mut undo = UndoStack::new();
@@ -449,10 +492,7 @@ mod tests {
             state.degrees, original.degrees,
             "second cycle: degrees corrupted"
         );
-        assert_eq!(
-            state.head, original.head,
-            "second cycle: head corrupted"
-        );
+        assert_eq!(state.head, original.head, "second cycle: head corrupted");
     }
 
     #[test]

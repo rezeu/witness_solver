@@ -1,0 +1,82 @@
+{
+  "num_cpus": 8,
+  "pruner_profile": "all",
+  "sequential": {
+    "mode": "sequential",
+    "split_depth": null,
+    "elapsed_secs": 0.000012432,
+    "nodes": 9,
+    "pruned": 0,
+    "pruner_hits": [
+      {
+        "name": "reachability",
+        "hits": 0
+      }
+    ],
+    "work_items": 1,
+    "solved": true
+  },
+  "parallel": [
+    {
+      "mode": "parallel",
+      "split_depth": 2,
+      "elapsed_secs": 0.00068743,
+      "nodes": 10,
+      "pruned": 0,
+      "pruner_hits": [
+        {
+          "name": "reachability",
+          "hits": 0
+        }
+      ],
+      "work_items": 4,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 3,
+      "elapsed_secs": 0.000279724,
+      "nodes": 13,
+      "pruned": 0,
+      "pruner_hits": [
+        {
+          "name": "reachability",
+          "hits": 0
+        }
+      ],
+      "work_items": 10,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 4,
+      "elapsed_secs": 0.000564954,
+      "nodes": 22,
+      "pruned": 0,
+      "pruner_hits": [
+        {
+          "name": "reachability",
+          "hits": 0
+        }
+      ],
+      "work_items": 24,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 5,
+      "elapsed_secs": 0.000445123,
+      "nodes": 50,
+      "pruned": 0,
+      "pruner_hits": [
+        {
+          "name": "reachability",
+          "hits": 0
+        }
+      ],
+      "work_items": 58,
+      "solved": true
+    }
+  ],
+  "best_split_depth": 3
+}

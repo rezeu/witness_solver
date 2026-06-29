@@ -1,0 +1,122 @@
+{
+  "num_cpus": 8,
+  "pruner_profile": "all",
+  "sequential": {
+    "mode": "sequential",
+    "split_depth": null,
+    "elapsed_secs": 11.673114923,
+    "nodes": 12855257,
+    "pruned": 6132453,
+    "pruner_hits": [
+      {
+        "name": "dots",
+        "hits": 3718070
+      },
+      {
+        "name": "triangles",
+        "hits": 247780
+      },
+      {
+        "name": "regions",
+        "hits": 2166603
+      }
+    ],
+    "work_items": 1,
+    "solved": true
+  },
+  "parallel": [
+    {
+      "mode": "parallel",
+      "split_depth": 2,
+      "elapsed_secs": 14.72265916,
+      "nodes": 52318516,
+      "pruned": 25730153,
+      "pruner_hits": [
+        {
+          "name": "dots",
+          "hits": 15764554
+        },
+        {
+          "name": "triangles",
+          "hits": 950652
+        },
+        {
+          "name": "regions",
+          "hits": 9014947
+        }
+      ],
+      "work_items": 4,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 3,
+      "elapsed_secs": 7.332991022,
+      "nodes": 38690984,
+      "pruned": 19014746,
+      "pruner_hits": [
+        {
+          "name": "dots",
+          "hits": 11639778
+        },
+        {
+          "name": "triangles",
+          "hits": 711726
+        },
+        {
+          "name": "regions",
+          "hits": 6663242
+        }
+      ],
+      "work_items": 10,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 4,
+      "elapsed_secs": 3.951847877,
+      "nodes": 20308959,
+      "pruned": 9989519,
+      "pruner_hits": [
+        {
+          "name": "dots",
+          "hits": 6138381
+        },
+        {
+          "name": "triangles",
+          "hits": 300446
+        },
+        {
+          "name": "regions",
+          "hits": 3550692
+        }
+      ],
+      "work_items": 24,
+      "solved": true
+    },
+    {
+      "mode": "parallel",
+      "split_depth": 5,
+      "elapsed_secs": 8.897742933,
+      "nodes": 44285049,
+      "pruned": 21765069,
+      "pruner_hits": [
+        {
+          "name": "dots",
+          "hits": 13266720
+        },
+        {
+          "name": "triangles",
+          "hits": 878479
+        },
+        {
+          "name": "regions",
+          "hits": 7619870
+        }
+      ],
+      "work_items": 54,
+      "solved": true
+    }
+  ],
+  "best_split_depth": 4
+}

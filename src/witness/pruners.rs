@@ -1,7 +1,7 @@
 use crate::solver::Pruner;
 use crate::witness::graph::{CellConstraint, WitnessGraph};
 use crate::witness::region::compute_regions;
-use crate::witness::rules::{check_squares_in_region, check_stars_in_region};
+use crate::witness::rules::{check_squares_in_region, check_stars_in_region, check_suns_in_region};
 use crate::witness::state::WitnessState;
 
 /// Prune if the head can no longer reach the end node through unvisited nodes
@@ -11,48 +11,9 @@ pub struct ReachabilityPruner;
 
 impl Pruner<WitnessState> for ReachabilityPruner {
     fn should_prune(&self, s: &WitnessState, g: &WitnessGraph) -> bool {
-        !can_reach(s, g, s.head, g.end)
+        let reachable = compute_reachable(s, g);
+        !bit_test(&reachable, g.end)
     }
-}
-
-fn can_reach(s: &WitnessState, g: &WitnessGraph, from: usize, to: usize) -> bool {
-    if from == to {
-        return true;
-    }
-
-    let mut visited = [0u64; 4];
-    let mut stack_buf = [0usize; 289];
-    bit_set(&mut visited, from);
-    stack_buf[0] = from;
-    let mut sp: usize = 1;
-
-    while sp > 0 {
-        sp -= 1;
-        let u = stack_buf[sp];
-        let (neighbors, count) = &g.adj[u];
-
-        for i in 0..*count as usize {
-            let v = neighbors[i];
-            if bit_test(&visited, v) {
-                continue;
-            }
-            if s.degrees[v] > 0 && v != to {
-                continue;
-            }
-            let ei = g.edge_endpoints_to_idx(u, v);
-            if s.used(ei) || g.is_broken(ei) {
-                continue;
-            }
-            bit_set(&mut visited, v);
-            if v == to {
-                return true;
-            }
-            stack_buf[sp] = v;
-            sp += 1;
-        }
-    }
-
-    false
 }
 
 /// Extended pruner: also checks that all unvisited dot nodes are still
@@ -68,15 +29,40 @@ impl Pruner<WitnessState> for DotReachabilityPruner {
             return true;
         }
 
-        // All unvisited dot nodes must be reachable
-        for &ni in &g.dot_nodes {
+        // All unvisited dot nodes must be reachable.
+        for ni in required_dot_nodes(g) {
             if s.degrees[ni] == 0 && !bit_test(&reachable, ni) {
                 return true;
             }
         }
 
-        false
+        required_dot_edges_are_unreachable(s, g, &reachable)
     }
+}
+
+fn required_dot_nodes(g: &WitnessGraph) -> impl Iterator<Item = usize> + '_ {
+    g.dot_nodes
+        .iter()
+        .copied()
+        .chain(g.colored_dot_nodes.iter().map(|&(ni, _)| ni))
+}
+
+fn required_dot_edges_are_unreachable(
+    s: &WitnessState,
+    g: &WitnessGraph,
+    reachable: &[u64; 4],
+) -> bool {
+    g.dot_edges
+        .iter()
+        .copied()
+        .chain(g.colored_dot_edges.iter().map(|&(ei, _)| ei))
+        .any(|ei| {
+            if s.used(ei) {
+                return false;
+            }
+            let (u, v) = g.edge_idx_to_endpoints(ei);
+            !bit_test(reachable, u) && !bit_test(reachable, v)
+        })
 }
 
 fn compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
@@ -91,8 +77,7 @@ fn compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
         let u = stack_buf[sp];
         let (neighbors, count) = &g.adj[u];
 
-        for i in 0..*count as usize {
-            let v = neighbors[i];
+        for &v in neighbors.iter().take(*count as usize) {
             if bit_test(&reachable, v) {
                 continue;
             }
@@ -221,6 +206,9 @@ impl Pruner<WitnessState> for ClosedRegionPruner {
             if !check_stars_in_region(g, &regions, r) {
                 return true;
             }
+            if !check_suns_in_region(g, &regions, r) {
+                return true;
+            }
         }
         false
     }
@@ -241,7 +229,10 @@ fn dual_compute_reachable(s: &WitnessState, g: &WitnessGraph) -> [u64; 4] {
     let mut sp: usize = 1;
 
     // Source 2: mirror head (if off-axis and distinct)
-    if let Some(mh) = g.symmetric_node(s.head) && mh != s.head && !bit_test(&reachable, mh) {
+    if let Some(mh) = g.symmetric_node(s.head)
+        && mh != s.head
+        && !bit_test(&reachable, mh)
+    {
         bit_set(&mut reachable, mh);
         stack_buf[sp] = mh;
         sp += 1;
@@ -289,7 +280,9 @@ impl Pruner<WitnessState> for SymmetryReachabilityPruner {
         }
 
         // Mirror end must be reachable (if not on-axis)
-        if let Some(me) = g.symmetric_node(g.end) && !bit_test(&reachable, me) {
+        if let Some(me) = g.symmetric_node(g.end)
+            && !bit_test(&reachable, me)
+        {
             return true;
         }
 
@@ -297,9 +290,8 @@ impl Pruner<WitnessState> for SymmetryReachabilityPruner {
     }
 }
 
-/// Prune if any unvisited black dot node is unreachable from EITHER the
+/// Prune if any unvisited required dot is unreachable from EITHER the
 /// player path OR the mirror path in a symmetry puzzle.
-/// Does NOT handle colored dots (blue/yellow) — that is deferred to P3.1.
 pub struct SymmetryDotPruner;
 
 impl Pruner<WitnessState> for SymmetryDotPruner {
@@ -310,27 +302,33 @@ impl Pruner<WitnessState> for SymmetryDotPruner {
         if !bit_test(&reachable, g.end) {
             return true;
         }
-        if let Some(me) = g.symmetric_node(g.end) && !bit_test(&reachable, me) {
+        if let Some(me) = g.symmetric_node(g.end)
+            && !bit_test(&reachable, me)
+        {
             return true;
         }
 
-        // All unvisited dot nodes must be reachable via dual-source BFS
-        // TODO: colored dot support (P3.1)
-        for &ni in &g.dot_nodes {
+        // All unvisited dot nodes must be reachable via dual-source BFS.
+        for ni in required_dot_nodes(g) {
             if s.degrees[ni] == 0 && !bit_test(&reachable, ni) {
                 return true;
             }
         }
 
-        false
+        required_dot_edges_are_unreachable(s, g, &reachable)
     }
 }
 
 /// True iff this graph has any square or star constraint.
 pub fn has_color_constraints(g: &WitnessGraph) -> bool {
-    g.cells.iter().any(|c| matches!(c,
-        CellConstraint::Square { .. } | CellConstraint::Star { .. }
-    ))
+    g.cells.iter().any(|c| {
+        matches!(
+            c,
+            CellConstraint::Square { .. }
+                | CellConstraint::Star { .. }
+                | CellConstraint::Sun { .. }
+        )
+    })
 }
 
 // --- tiny bitset on [u64; 4] (256 bits, stack-allocated) ------------------

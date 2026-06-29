@@ -1,89 +1,46 @@
-use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs;
 
-// ---------------------------------------------------------------------------
-// JSON schema
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-pub struct PuzzleJson {
-    pub width: usize,
-    pub height: usize,
-    pub starts: Vec<[usize; 2]>,
-    pub ends: Vec<[usize; 2]>,
-    #[serde(default)]
-    pub node_dots: Vec<[usize; 2]>,
-    #[serde(default)]
-    pub edge_dots: Vec<[[usize; 2]; 2]>,
-    #[serde(default)]
-    pub broken_edges: Vec<[[usize; 2]; 2]>,
-    #[serde(default)]
-    pub squares: Vec<SquareJson>,
-    #[serde(default)]
-    pub stars: Vec<StarJson>,
-    #[serde(default)]
-    pub triangles: Vec<TriangleJson>,
-    #[serde(default)]
-    pub tetris: Vec<TetrisJson>,
-    #[serde(default)]
-    pub eliminations: Vec<[usize; 2]>,
-    #[serde(default)]
-    pub symmetry: Option<SymmetryKind>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum SymmetryKind {
-    #[serde(rename = "x")]
-    MirrorX,
-    #[serde(rename = "y")]
-    MirrorY,
-    #[serde(rename = "xy")]
-    MirrorXY,
-}
-
-#[derive(Deserialize)]
-pub struct SquareJson {
-    pub pos: [usize; 2],
-    pub color: u8,
-}
-
-#[derive(Deserialize)]
-pub struct StarJson {
-    pub pos: [usize; 2],
-    pub color: u8,
-}
-
-#[derive(Deserialize)]
-pub struct TriangleJson {
-    pub pos: [usize; 2],
-    pub count: u8,
-}
-
-#[derive(Deserialize)]
-pub struct TetrisJson {
-    pub pos: [usize; 2],
-    pub shape: Vec<[i8; 2]>,
-    #[serde(default)]
-    pub negative: bool,
-}
+pub use crate::witness::constraints::CellConstraint;
+use crate::witness::indexing;
+pub use crate::witness::schema::{
+    ColoredDotJson, ColoredEdgeDotJson, PuzzleJson, SquareJson, StarJson, SunJson, SymmetryKind,
+    TetrisJson, TriangleJson,
+};
+use crate::witness::types::{EdgeId, NodeId};
 
 // ---------------------------------------------------------------------------
-// Cell constraint enum
+// GraphError
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
-pub enum CellConstraint {
-    None,
-    Square { color: u8 },
-    Star { color: u8 },
-    Triangle { count: u8 },
-    Tetris { shape: Vec<[i8; 2]>, negative: bool },
-    Elimination,
+#[derive(Debug)]
+pub enum GraphError {
+    Io(std::io::Error),
+    MissingStart,
+    MissingEnd,
+    InvalidJson(serde_json::Error),
+    InvalidPuzzle(String),
 }
 
-impl Default for CellConstraint {
-    fn default() -> Self {
-        CellConstraint::None
+impl std::fmt::Display for GraphError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GraphError::Io(e) => write!(f, "IO error: {}", e),
+            GraphError::MissingStart => write!(f, "need at least one start"),
+            GraphError::MissingEnd => write!(f, "need at least one end"),
+            GraphError::InvalidJson(e) => write!(f, "invalid JSON: {}", e),
+            GraphError::InvalidPuzzle(e) => write!(f, "invalid puzzle: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for GraphError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            GraphError::Io(e) => Some(e),
+            GraphError::InvalidJson(e) => Some(e),
+            _ => None,
+        }
     }
 }
 
@@ -92,20 +49,25 @@ impl Default for CellConstraint {
 // ---------------------------------------------------------------------------
 
 pub struct WitnessGraph {
-    pub width: usize,
-    pub height: usize,
-    pub start: usize,              // node index
-    pub end: usize,                // node index
-    pub broken: Vec<u64>,          // bitset of broken edge indices
-    pub dot_nodes: Vec<usize>,     // list of node indices with dots
-    pub dot_edges: Vec<usize>,     // list of edge indices with dots
-    pub cells: Vec<CellConstraint>,// cy * width + cx
-    pub has_region_rules: bool,    // any cell has square/star/tetris/elimination
-    pub triangle_cells: Vec<(usize, usize, u8)>, // (cx, cy, count) for early pruning
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) start: NodeId,                           // node index
+    pub(crate) end: NodeId,                             // node index
+    pub(crate) broken: Vec<u64>,                        // bitset of broken edge indices
+    pub(crate) dot_nodes: Vec<NodeId>, // list of node indices with black dots (must be visited)
+    pub(crate) dot_edges: Vec<EdgeId>, // list of edge indices with black dots (must be used)
+    pub(crate) colored_dot_nodes: Vec<(NodeId, u8)>, // (node_index, color), color > 0. Same-color nodes must be in the same region.
+    pub(crate) colored_dot_edges: Vec<(EdgeId, u8)>, // (edge_index, color), color > 0. Same-color edges must be in the same region.
+    pub(crate) cells: Vec<CellConstraint>,           // cy * width + cx
+    pub(crate) has_region_rules: bool, // any cell has square/star/sun/tetris/elimination
+    pub(crate) triangle_cells: Vec<(usize, usize, u8)>, // (cx, cy, count) for early pruning
+    pub(crate) sun_cells: Vec<(usize, usize, u8)>, // (cx, cy, color) for sun constraints
     /// Pre-computed adjacency: adj[node] = ([neighbor; 4], count).
     /// Avoids division/modulo in hot paths (gen_moves, pruner BFS).
-    pub adj: Vec<([usize; 4], u8)>,
-    pub symmetry: Option<SymmetryKind>,
+    pub(crate) adj: Vec<([NodeId; 4], u8)>,
+    pub(crate) symmetry: Option<SymmetryKind>,
+    pub(crate) end_nodes: Vec<NodeId>, // cached result of all_end_nodes()
+    pub(crate) expected_degree: Vec<u8>, // cached: 0=none, 1=endpoint, 2=double-role endpoint
 }
 
 // --- Bitset helpers (small, for broken-edge set) --------------------------
@@ -131,21 +93,23 @@ fn set_bit(bits: &mut [u64], i: usize) {
 // ---------------------------------------------------------------------------
 
 impl WitnessGraph {
-    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let text = fs::read_to_string(path)?;
-        let json: PuzzleJson = serde_json::from_str(&text)?;
+    pub fn from_file(path: &str) -> Result<Self, GraphError> {
+        let text = fs::read_to_string(path).map_err(GraphError::Io)?;
+        let json: PuzzleJson = serde_json::from_str(&text).map_err(GraphError::InvalidJson)?;
         Self::from_json(json)
     }
 
-    pub fn from_json(j: PuzzleJson) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_json(j: PuzzleJson) -> Result<Self, GraphError> {
+        Self::validate_json(&j)?;
+
         let w = j.width;
         let h = j.height;
 
         if j.starts.is_empty() {
-            return Err("need at least one start".into());
+            return Err(GraphError::MissingStart);
         }
         if j.ends.is_empty() {
-            return Err("need at least one end".into());
+            return Err(GraphError::MissingEnd);
         }
 
         let start_xy = j.starts[0];
@@ -155,7 +119,7 @@ impl WitnessGraph {
         let end = Self::xy_to_idx_static(w, end_xy[0], end_xy[1]);
 
         let num_slots = Self::num_edge_slots_static(w, h);
-        let bitset_words = (num_slots + 63) / 64;
+        let bitset_words = num_slots.div_ceil(64);
 
         // Broken edges
         let mut broken = vec![0u64; bitset_words];
@@ -167,20 +131,39 @@ impl WitnessGraph {
         }
 
         // Dot nodes
-        let dot_nodes: Vec<usize> = j
+        let dot_nodes: Vec<NodeId> = j
             .node_dots
             .iter()
             .map(|xy| Self::xy_to_idx_static(w, xy[0], xy[1]))
             .collect();
 
         // Dot edges
-        let dot_edges: Vec<usize> = j
+        let dot_edges: Vec<EdgeId> = j
             .edge_dots
             .iter()
             .map(|pair| {
                 let u = Self::xy_to_idx_static(w, pair[0][0], pair[0][1]);
                 let v = Self::xy_to_idx_static(w, pair[1][0], pair[1][1]);
                 Self::edge_endpoints_to_idx_static(w, u, v)
+            })
+            .collect();
+
+        // Colored dot nodes (color > 0: same-color nodes must be in the same region)
+        let colored_dot_nodes: Vec<(NodeId, u8)> = j
+            .colored_node_dots
+            .iter()
+            .map(|cd| (Self::xy_to_idx_static(w, cd.pos[0], cd.pos[1]), cd.color))
+            .collect();
+
+        // Colored dot edges
+        let colored_dot_edges: Vec<(EdgeId, u8)> = j
+            .colored_edge_dots
+            .iter()
+            .map(|cd| {
+                let u = Self::xy_to_idx_static(w, cd.endpoints[0][0], cd.endpoints[0][1]);
+                let v = Self::xy_to_idx_static(w, cd.endpoints[1][0], cd.endpoints[1][1]);
+                let ei = Self::edge_endpoints_to_idx_static(w, u, v);
+                (ei, cd.color)
             })
             .collect();
 
@@ -203,24 +186,42 @@ impl WitnessGraph {
             cells[idx] = CellConstraint::Tetris {
                 shape: te.shape.clone(),
                 negative: te.negative,
+                can_rotate: te.can_rotate,
             };
+        }
+        for su in &j.sun_cells {
+            let idx = su.pos[1] * w + su.pos[0];
+            cells[idx] = CellConstraint::Sun { color: su.color };
         }
         for el in &j.eliminations {
             let idx = el[1] * w + el[0];
             cells[idx] = CellConstraint::Elimination;
         }
 
-        let has_region_rules = cells.iter().any(|c| matches!(c,
-            CellConstraint::Square { .. } | CellConstraint::Star { .. } |
-            CellConstraint::Tetris { .. } | CellConstraint::Elimination
-        ));
+        let has_region_rules = cells.iter().any(|c| {
+            matches!(
+                c,
+                CellConstraint::Square { .. }
+                    | CellConstraint::Star { .. }
+                    | CellConstraint::Sun { .. }
+                    | CellConstraint::Tetris { .. }
+                    | CellConstraint::Elimination
+            )
+        });
 
         // Pre-compute triangle cells for early pruning
         let mut triangle_cells = Vec::new();
+        let mut sun_cells = Vec::new();
         for cy in 0..h {
             for cx in 0..w {
-                if let CellConstraint::Triangle { count } = cells[cy * w + cx] {
-                    triangle_cells.push((cx, cy, count));
+                match &cells[cy * w + cx] {
+                    CellConstraint::Triangle { count } => {
+                        triangle_cells.push((cx, cy, *count));
+                    }
+                    CellConstraint::Sun { color } => {
+                        sun_cells.push((cx, cy, *color));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -253,6 +254,85 @@ impl WitnessGraph {
             }
         }
 
+        // Pre-compute end nodes and expected degrees
+        let mut end_nodes = vec![start, end];
+        if let Some(kind) = j.symmetry {
+            let (sx, sy) = (start_xy[0], start_xy[1]);
+            let mirror_start = match kind {
+                SymmetryKind::MirrorX => {
+                    if 2 * sx == w {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, w - sx, sy))
+                    }
+                }
+                SymmetryKind::MirrorY => {
+                    if 2 * sy == h {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, sx, h - sy))
+                    }
+                }
+                SymmetryKind::MirrorXY => {
+                    if 2 * sx == w && 2 * sy == h {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, w - sx, h - sy))
+                    }
+                }
+            };
+            match mirror_start {
+                Some(ms) => {
+                    if !end_nodes.contains(&ms) {
+                        end_nodes.push(ms);
+                    }
+                }
+                None => {
+                    end_nodes.push(start);
+                }
+            }
+
+            let (ex, ey) = (end_xy[0], end_xy[1]);
+            let mirror_end = match kind {
+                SymmetryKind::MirrorX => {
+                    if 2 * ex == w {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, w - ex, ey))
+                    }
+                }
+                SymmetryKind::MirrorY => {
+                    if 2 * ey == h {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, ex, h - ey))
+                    }
+                }
+                SymmetryKind::MirrorXY => {
+                    if 2 * ex == w && 2 * ey == h {
+                        None
+                    } else {
+                        Some(Self::xy_to_idx_static(w, w - ex, h - ey))
+                    }
+                }
+            };
+            match mirror_end {
+                Some(me) => {
+                    if !end_nodes.contains(&me) {
+                        end_nodes.push(me);
+                    }
+                }
+                None => {
+                    end_nodes.push(end);
+                }
+            }
+        }
+
+        let mut expected_degree = vec![0u8; num_nodes];
+        for &node in &end_nodes {
+            expected_degree[node] += 1;
+        }
+
         Ok(WitnessGraph {
             width: w,
             height: h,
@@ -261,43 +341,419 @@ impl WitnessGraph {
             broken,
             dot_nodes,
             dot_edges,
+            colored_dot_nodes,
+            colored_dot_edges,
             cells,
             has_region_rules,
             triangle_cells,
+            sun_cells,
             adj,
             symmetry: j.symmetry,
+            end_nodes,
+            expected_degree,
         })
     }
 
     // --- Static helpers (no &self, used during construction) ---------------
 
-    fn xy_to_idx_static(w: usize, x: usize, y: usize) -> usize {
-        y * (w + 1) + x
+    fn validate_json(j: &PuzzleJson) -> Result<(), GraphError> {
+        let w = j.width;
+        let h = j.height;
+
+        if w == 0 || h == 0 {
+            return Err(Self::invalid("width and height must be positive"));
+        }
+
+        let node_width = w
+            .checked_add(1)
+            .ok_or_else(|| Self::invalid("grid width overflows node bounds"))?;
+        let node_height = h
+            .checked_add(1)
+            .ok_or_else(|| Self::invalid("grid height overflows node bounds"))?;
+        let num_nodes = node_width
+            .checked_mul(node_height)
+            .ok_or_else(|| Self::invalid("grid dimensions overflow node count"))?;
+        let num_cells = w
+            .checked_mul(h)
+            .ok_or_else(|| Self::invalid("grid dimensions overflow cell count"))?;
+        if num_nodes > 256 || num_cells > 256 {
+            return Err(Self::invalid(
+                "grid is too large; this solver supports at most 256 nodes and 256 cells",
+            ));
+        }
+
+        if j.starts.is_empty() {
+            return Err(GraphError::MissingStart);
+        }
+        if j.ends.is_empty() {
+            return Err(GraphError::MissingEnd);
+        }
+        if j.starts.len() > 1 {
+            return Err(Self::invalid("multiple start nodes are not supported"));
+        }
+        if j.ends.len() > 1 {
+            return Err(Self::invalid("multiple end nodes are not supported"));
+        }
+
+        Self::validate_node_coord(w, h, j.starts[0], "start")?;
+        Self::validate_node_coord(w, h, j.ends[0], "end")?;
+        if j.starts[0] == j.ends[0] {
+            return Err(Self::invalid("start and end must be different nodes"));
+        }
+
+        let mut node_constraints = HashSet::new();
+        for &xy in &j.node_dots {
+            Self::validate_node_coord(w, h, xy, "node dot")?;
+            if !node_constraints.insert((xy[0], xy[1])) {
+                return Err(Self::invalid(format!(
+                    "duplicate node constraint at ({}, {})",
+                    xy[0], xy[1]
+                )));
+            }
+        }
+        for dot in &j.colored_node_dots {
+            Self::validate_colored_dot_color(dot.color, "colored node dot")?;
+            Self::validate_node_coord(w, h, dot.pos, "colored node dot")?;
+            if !node_constraints.insert((dot.pos[0], dot.pos[1])) {
+                return Err(Self::invalid(format!(
+                    "duplicate node constraint at ({}, {})",
+                    dot.pos[0], dot.pos[1]
+                )));
+            }
+        }
+
+        let mut broken_edges = HashSet::new();
+        for pair in &j.broken_edges {
+            let ei = Self::validate_edge(w, h, *pair, "broken edge")?;
+            if !broken_edges.insert(ei) {
+                return Err(Self::invalid(format!("duplicate broken edge {}", ei)));
+            }
+        }
+
+        let mut edge_constraints = HashSet::new();
+        for pair in &j.edge_dots {
+            let ei = Self::validate_edge(w, h, *pair, "edge dot")?;
+            if broken_edges.contains(&ei) {
+                return Err(Self::invalid(format!(
+                    "edge dot {} is on a broken edge",
+                    ei
+                )));
+            }
+            if !edge_constraints.insert(ei) {
+                return Err(Self::invalid(format!("duplicate edge constraint {}", ei)));
+            }
+        }
+        for dot in &j.colored_edge_dots {
+            Self::validate_colored_dot_color(dot.color, "colored edge dot")?;
+            let ei = Self::validate_edge(w, h, dot.endpoints, "colored edge dot")?;
+            if broken_edges.contains(&ei) {
+                return Err(Self::invalid(format!(
+                    "colored edge dot {} is on a broken edge",
+                    ei
+                )));
+            }
+            if !edge_constraints.insert(ei) {
+                return Err(Self::invalid(format!("duplicate edge constraint {}", ei)));
+            }
+        }
+
+        let mut cell_constraints = vec![None; num_cells];
+        for sq in &j.squares {
+            Self::validate_color(sq.color, "square")?;
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, sq.pos, "square")?;
+        }
+        for st in &j.stars {
+            Self::validate_color(st.color, "star")?;
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, st.pos, "star")?;
+        }
+        for tr in &j.triangles {
+            if !(1..=3).contains(&tr.count) {
+                return Err(Self::invalid(format!(
+                    "triangle at ({}, {}) has invalid count {}; expected 1..=3",
+                    tr.pos[0], tr.pos[1], tr.count
+                )));
+            }
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, tr.pos, "triangle")?;
+        }
+        for te in &j.tetris {
+            Self::validate_tetris_shape(w, h, te)?;
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, te.pos, "tetris")?;
+        }
+        for su in &j.sun_cells {
+            Self::validate_color(su.color, "sun")?;
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, su.pos, "sun")?;
+        }
+        for &pos in &j.eliminations {
+            Self::mark_cell_constraint(w, h, &mut cell_constraints, pos, "elimination")?;
+        }
+
+        Ok(())
+    }
+
+    fn invalid(msg: impl Into<String>) -> GraphError {
+        GraphError::InvalidPuzzle(msg.into())
+    }
+
+    fn validate_color(color: u8, kind: &str) -> Result<(), GraphError> {
+        if color >= 16 {
+            return Err(Self::invalid(format!(
+                "{} color {} is out of range; expected 0..=15",
+                kind, color
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_colored_dot_color(color: u8, kind: &str) -> Result<(), GraphError> {
+        if !(1..=15).contains(&color) {
+            return Err(Self::invalid(format!(
+                "{} color {} is out of range; expected 1..=15",
+                kind, color
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_node_coord(
+        w: usize,
+        h: usize,
+        xy: [usize; 2],
+        label: &str,
+    ) -> Result<(), GraphError> {
+        if xy[0] > w || xy[1] > h {
+            return Err(Self::invalid(format!(
+                "{} coordinate ({}, {}) is outside node bounds 0..={} x 0..={}",
+                label, xy[0], xy[1], w, h
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_cell_coord(
+        w: usize,
+        h: usize,
+        xy: [usize; 2],
+        label: &str,
+    ) -> Result<(), GraphError> {
+        if xy[0] >= w || xy[1] >= h {
+            return Err(Self::invalid(format!(
+                "{} coordinate ({}, {}) is outside cell bounds 0..{} x 0..{}",
+                label, xy[0], xy[1], w, h
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_edge(
+        w: usize,
+        h: usize,
+        pair: [[usize; 2]; 2],
+        label: &str,
+    ) -> Result<usize, GraphError> {
+        Self::validate_node_coord(w, h, pair[0], label)?;
+        Self::validate_node_coord(w, h, pair[1], label)?;
+
+        let dx = pair[0][0].abs_diff(pair[1][0]);
+        let dy = pair[0][1].abs_diff(pair[1][1]);
+        if dx + dy != 1 {
+            return Err(Self::invalid(format!(
+                "{} endpoints ({}, {}) and ({}, {}) must be adjacent grid nodes",
+                label, pair[0][0], pair[0][1], pair[1][0], pair[1][1]
+            )));
+        }
+
+        let u = Self::xy_to_idx_static(w, pair[0][0], pair[0][1]);
+        let v = Self::xy_to_idx_static(w, pair[1][0], pair[1][1]);
+        Ok(Self::edge_endpoints_to_idx_static(w, u, v))
+    }
+
+    fn mark_cell_constraint(
+        w: usize,
+        h: usize,
+        cells: &mut [Option<&'static str>],
+        pos: [usize; 2],
+        kind: &'static str,
+    ) -> Result<(), GraphError> {
+        Self::validate_cell_coord(w, h, pos, kind)?;
+        let idx = pos[1] * w + pos[0];
+        if let Some(existing) = cells[idx] {
+            return Err(Self::invalid(format!(
+                "cell ({}, {}) has both {} and {} constraints",
+                pos[0], pos[1], existing, kind
+            )));
+        }
+        cells[idx] = Some(kind);
+        Ok(())
+    }
+
+    fn validate_tetris_shape(w: usize, h: usize, te: &TetrisJson) -> Result<(), GraphError> {
+        if te.shape.is_empty() {
+            return Err(Self::invalid(format!(
+                "tetris at ({}, {}) has an empty shape",
+                te.pos[0], te.pos[1]
+            )));
+        }
+
+        let mut offsets = HashSet::new();
+        let mut min_x = i16::MAX;
+        let mut max_x = i16::MIN;
+        let mut min_y = i16::MAX;
+        let mut max_y = i16::MIN;
+        for &[dx, dy] in &te.shape {
+            let dx = dx as i16;
+            let dy = dy as i16;
+            if !offsets.insert((dx, dy)) {
+                return Err(Self::invalid(format!(
+                    "tetris at ({}, {}) has duplicate offset ({}, {})",
+                    te.pos[0], te.pos[1], dx, dy
+                )));
+            }
+            min_x = min_x.min(dx);
+            max_x = max_x.max(dx);
+            min_y = min_y.min(dy);
+            max_y = max_y.max(dy);
+        }
+
+        if !offsets.contains(&(0, 0)) {
+            return Err(Self::invalid(format!(
+                "tetris at ({}, {}) must include origin offset (0, 0)",
+                te.pos[0], te.pos[1]
+            )));
+        }
+
+        if te.shape.len() > w * h {
+            return Err(Self::invalid(format!(
+                "tetris at ({}, {}) has area {} larger than the puzzle area {}",
+                te.pos[0],
+                te.pos[1],
+                te.shape.len(),
+                w * h
+            )));
+        }
+
+        if !Self::shape_is_connected(&offsets) {
+            return Err(Self::invalid(format!(
+                "tetris at ({}, {}) must be 4-neighbor connected",
+                te.pos[0], te.pos[1]
+            )));
+        }
+
+        let shape_w = (max_x - min_x + 1) as usize;
+        let shape_h = (max_y - min_y + 1) as usize;
+        let fits = shape_w <= w && shape_h <= h;
+        let fits_rotated = te.can_rotate && shape_w <= h && shape_h <= w;
+        if !fits && !fits_rotated {
+            return Err(Self::invalid(format!(
+                "tetris at ({}, {}) has bounding box {}x{}, which does not fit {}x{} puzzle",
+                te.pos[0], te.pos[1], shape_w, shape_h, w, h
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn shape_is_connected(offsets: &HashSet<(i16, i16)>) -> bool {
+        let Some(&first) = offsets.iter().next() else {
+            return false;
+        };
+        let mut seen = HashSet::new();
+        let mut stack = vec![first];
+        while let Some((x, y)) = stack.pop() {
+            if !seen.insert((x, y)) {
+                continue;
+            }
+            for next in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                if offsets.contains(&next) && !seen.contains(&next) {
+                    stack.push(next);
+                }
+            }
+        }
+        seen.len() == offsets.len()
+    }
+
+    fn xy_to_idx_static(w: usize, x: usize, y: usize) -> NodeId {
+        indexing::node_xy_to_idx(w, x, y)
     }
 
     fn num_edge_slots_static(w: usize, h: usize) -> usize {
-        2 * (h + 1) * (w + 1)
+        indexing::num_edge_slots(w, h)
     }
 
-    fn edge_endpoints_to_idx_static(w: usize, u: usize, v: usize) -> usize {
-        let ux = u % (w + 1);
-        let uy = u / (w + 1);
-        let vx = v % (w + 1);
-        let vy = v / (w + 1);
-        if uy == vy {
-            // horizontal
-            let x = usize::min(ux, vx);
-            let y = uy;
-            2 * (y * w + x)
-        } else {
-            // vertical
-            let x = ux;
-            let y = usize::min(uy, vy);
-            2 * (y * (w + 1) + x) + 1
-        }
+    fn edge_endpoints_to_idx_static(w: usize, u: NodeId, v: NodeId) -> EdgeId {
+        indexing::edge_endpoints_to_idx(w, u, v)
     }
 
     // --- Instance methods -------------------------------------------------
+
+    #[inline]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    #[inline]
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    #[inline]
+    pub fn start(&self) -> NodeId {
+        self.start
+    }
+
+    #[inline]
+    pub fn end(&self) -> NodeId {
+        self.end
+    }
+
+    #[inline]
+    pub fn symmetry(&self) -> Option<SymmetryKind> {
+        self.symmetry
+    }
+
+    #[inline]
+    pub fn dot_nodes(&self) -> &[NodeId] {
+        &self.dot_nodes
+    }
+
+    #[inline]
+    pub fn dot_edges(&self) -> &[EdgeId] {
+        &self.dot_edges
+    }
+
+    #[inline]
+    pub fn colored_dot_nodes(&self) -> &[(NodeId, u8)] {
+        &self.colored_dot_nodes
+    }
+
+    #[inline]
+    pub fn colored_dot_edges(&self) -> &[(EdgeId, u8)] {
+        &self.colored_dot_edges
+    }
+
+    #[inline]
+    pub fn cells(&self) -> &[CellConstraint] {
+        &self.cells
+    }
+
+    #[inline]
+    pub fn has_region_rules(&self) -> bool {
+        self.has_region_rules
+    }
+
+    #[inline]
+    pub fn triangle_cells(&self) -> &[(usize, usize, u8)] {
+        &self.triangle_cells
+    }
+
+    #[inline]
+    pub fn sun_cells(&self) -> &[(usize, usize, u8)] {
+        &self.sun_cells
+    }
+
+    #[inline]
+    pub fn expected_degree(&self) -> &[u8] {
+        &self.expected_degree
+    }
 
     #[inline]
     pub fn num_nodes(&self) -> usize {
@@ -310,51 +766,36 @@ impl WitnessGraph {
     }
 
     #[inline]
-    pub fn node_xy_to_idx(&self, x: usize, y: usize) -> usize {
-        y * (self.width + 1) + x
+    pub fn node_xy_to_idx(&self, x: usize, y: usize) -> NodeId {
+        indexing::node_xy_to_idx(self.width, x, y)
     }
 
     #[inline]
-    pub fn node_idx_to_xy(&self, ni: usize) -> (usize, usize) {
-        (ni % (self.width + 1), ni / (self.width + 1))
+    pub fn node_idx_to_xy(&self, ni: NodeId) -> (usize, usize) {
+        indexing::node_idx_to_xy(self.width, ni)
     }
 
     #[inline]
-    pub fn h_edge_index(&self, x: usize, y: usize) -> usize {
-        2 * (y * self.width + x)
+    pub fn h_edge_index(&self, x: usize, y: usize) -> EdgeId {
+        indexing::h_edge_index(self.width, x, y)
     }
 
     #[inline]
-    pub fn v_edge_index(&self, x: usize, y: usize) -> usize {
-        2 * (y * (self.width + 1) + x) + 1
+    pub fn v_edge_index(&self, x: usize, y: usize) -> EdgeId {
+        indexing::v_edge_index(self.width, x, y)
     }
 
-    pub fn edge_idx_to_endpoints(&self, ei: usize) -> (usize, usize) {
-        let real = ei >> 1;
-        if ei & 1 == 0 {
-            // horizontal
-            let y = real / self.width;
-            let x = real % self.width;
-            let u = self.node_xy_to_idx(x, y);
-            let v = self.node_xy_to_idx(x + 1, y);
-            (u, v)
-        } else {
-            // vertical
-            let y = real / (self.width + 1);
-            let x = real % (self.width + 1);
-            let u = self.node_xy_to_idx(x, y);
-            let v = self.node_xy_to_idx(x, y + 1);
-            (u, v)
-        }
+    pub fn edge_idx_to_endpoints(&self, ei: EdgeId) -> (NodeId, NodeId) {
+        indexing::edge_idx_to_endpoints(self.width, ei)
     }
 
     #[inline]
-    pub fn edge_endpoints_to_idx(&self, u: usize, v: usize) -> usize {
+    pub fn edge_endpoints_to_idx(&self, u: NodeId, v: NodeId) -> EdgeId {
         Self::edge_endpoints_to_idx_static(self.width, u, v)
     }
 
     #[inline]
-    pub fn is_broken(&self, ei: usize) -> bool {
+    pub fn is_broken(&self, ei: EdgeId) -> bool {
         test_bit(&self.broken, ei)
     }
 
@@ -366,15 +807,15 @@ impl WitnessGraph {
     /// Iterate all grid-adjacent nodes of `u` via closure (zero-allocation).
     /// Uses pre-computed adjacency list — no division/modulo.
     #[inline]
-    pub fn for_each_neighbor(&self, u: usize, mut f: impl FnMut(usize)) {
+    pub fn for_each_neighbor(&self, u: NodeId, mut f: impl FnMut(NodeId)) {
         let (neighbors, count) = &self.adj[u];
-        for i in 0..*count as usize {
-            f(neighbors[i]);
+        for &n in neighbors.iter().take(*count as usize) {
+            f(n);
         }
     }
     /// If the puzzle has symmetry, return the mirror node for `ni`.
     /// Returns `None` when the node is on the symmetry axis (self-symmetric).
-    pub fn symmetric_node(&self, ni: usize) -> Option<usize> {
+    pub fn symmetric_node(&self, ni: NodeId) -> Option<NodeId> {
         let kind = self.symmetry?;
         let (x, y) = self.node_idx_to_xy(ni);
         match kind {
@@ -404,7 +845,7 @@ impl WitnessGraph {
 
     /// If the puzzle has symmetry, return the mirror edge for `ei`.
     /// Returns `None` when the edge is self-symmetric (lies on the symmetry axis).
-    pub fn symmetric_edge(&self, ei: usize) -> Option<usize> {
+    pub fn symmetric_edge(&self, ei: EdgeId) -> Option<EdgeId> {
         let (u, v) = self.edge_idx_to_endpoints(ei);
         let mu = self.symmetric_node(u);
         let mv = self.symmetric_node(v);
@@ -430,44 +871,14 @@ impl WitnessGraph {
     /// with duplicates when a node serves as both player and mirror endpoint
     /// (self-symmetric on-axis nodes), so that the degree check can expect
     /// degree 1 for unique endpoints and degree 2 for double-role endpoints.
-    pub fn all_end_nodes(&self) -> Vec<usize> {
-        let mut nodes = vec![self.start, self.end];
-        if self.symmetry.is_some() {
-            // Mirror start
-            match self.symmetric_node(self.start) {
-                Some(ms) => {
-                    if !nodes.contains(&ms) {
-                        nodes.push(ms);
-                    }
-                }
-                None => {
-                    // self.start is on the symmetry axis: it serves as both
-                    // player start and mirror start → expect degree 2
-                    nodes.push(self.start);
-                }
-            }
-            // Mirror end
-            match self.symmetric_node(self.end) {
-                Some(me) => {
-                    if !nodes.contains(&me) {
-                        nodes.push(me);
-                    }
-                }
-                None => {
-                    // self.end is on the symmetry axis: it serves as both
-                    // player end and mirror end → expect degree 2
-                    nodes.push(self.end);
-                }
-            }
-        }
-        nodes
+    pub fn all_end_nodes(&self) -> Vec<NodeId> {
+        self.end_nodes.clone()
+    }
+
+    pub fn end_nodes_ref(&self) -> &[NodeId] {
+        &self.end_nodes
     }
 }
-
-// Safety: WitnessGraph is immutable after construction and contains no
-// interior mutability, so it's safe to share across threads.
-unsafe impl Sync for WitnessGraph {}
-unsafe impl Send for WitnessGraph {}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -494,7 +905,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap()
     }
@@ -514,7 +928,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap()
     }
@@ -565,7 +982,11 @@ mod tests {
             for y in 0..4 {
                 let h = g.h_edge_index(x, y);
                 let v = g.v_edge_index(x, y);
-                assert_ne!(h, v, "h_edge({},{})={} collides with v_edge({},{})={}", x, y, h, x, y, v);
+                assert_ne!(
+                    h, v,
+                    "h_edge({},{})={} collides with v_edge({},{})={}",
+                    x, y, h, x, y, v
+                );
                 assert!(h % 2 == 0, "h_edge should be even, got {}", h);
                 assert!(v % 2 == 1, "v_edge should be odd, got {}", v);
             }
@@ -707,10 +1128,22 @@ mod tests {
     fn test_symmetric_node_mirror_x() {
         let g = make_symmetry_graph(SymmetryKind::MirrorX, 4, 4);
         // Off-axis nodes mirror across x=2
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(4, 0));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(4, 0)).unwrap(), g.node_xy_to_idx(0, 0));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(1, 3)).unwrap(), g.node_xy_to_idx(3, 3));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 3)).unwrap(), g.node_xy_to_idx(1, 3));
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(),
+            g.node_xy_to_idx(4, 0)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(4, 0)).unwrap(),
+            g.node_xy_to_idx(0, 0)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(1, 3)).unwrap(),
+            g.node_xy_to_idx(3, 3)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(3, 3)).unwrap(),
+            g.node_xy_to_idx(1, 3)
+        );
         // On-axis nodes (x=2) return None
         assert!(g.symmetric_node(g.node_xy_to_idx(2, 0)).is_none());
         assert!(g.symmetric_node(g.node_xy_to_idx(2, 4)).is_none());
@@ -720,9 +1153,18 @@ mod tests {
     fn test_symmetric_node_mirror_y() {
         let g = make_symmetry_graph(SymmetryKind::MirrorY, 4, 4);
         // Off-axis nodes mirror across y=2
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(0, 4));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 4)).unwrap(), g.node_xy_to_idx(0, 0));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(), g.node_xy_to_idx(3, 3));
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(),
+            g.node_xy_to_idx(0, 4)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(0, 4)).unwrap(),
+            g.node_xy_to_idx(0, 0)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(),
+            g.node_xy_to_idx(3, 3)
+        );
         // On-axis nodes (y=2) return None
         assert!(g.symmetric_node(g.node_xy_to_idx(0, 2)).is_none());
         assert!(g.symmetric_node(g.node_xy_to_idx(4, 2)).is_none());
@@ -732,9 +1174,18 @@ mod tests {
     fn test_symmetric_node_mirror_xy() {
         let g = make_symmetry_graph(SymmetryKind::MirrorXY, 4, 4);
         // Off-axis nodes mirror across (x=2, y=2)
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(), g.node_xy_to_idx(4, 4));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(4, 4)).unwrap(), g.node_xy_to_idx(0, 0));
-        assert_eq!(g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(), g.node_xy_to_idx(1, 3));
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(0, 0)).unwrap(),
+            g.node_xy_to_idx(4, 4)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(4, 4)).unwrap(),
+            g.node_xy_to_idx(0, 0)
+        );
+        assert_eq!(
+            g.symmetric_node(g.node_xy_to_idx(3, 1)).unwrap(),
+            g.node_xy_to_idx(1, 3)
+        );
         // On-axis node (x=2, y=2) returns None
         assert!(g.symmetric_node(g.node_xy_to_idx(2, 2)).is_none());
         // Nodes on one axis but not both: off-axis
@@ -831,13 +1282,23 @@ mod tests {
             for x in 0..4 {
                 let he = g.h_edge_index(x, y);
                 if let Some(m) = g.symmetric_edge(he) {
-                    assert_eq!(g.symmetric_edge(m).unwrap(), he,
-                        "double mirror of h_edge({},{}) should be itself", x, y);
+                    assert_eq!(
+                        g.symmetric_edge(m).unwrap(),
+                        he,
+                        "double mirror of h_edge({},{}) should be itself",
+                        x,
+                        y
+                    );
                 }
                 let ve = g.v_edge_index(x, y);
                 if let Some(m) = g.symmetric_edge(ve) {
-                    assert_eq!(g.symmetric_edge(m).unwrap(), ve,
-                        "double mirror of v_edge({},{}) should be itself", x, y);
+                    assert_eq!(
+                        g.symmetric_edge(m).unwrap(),
+                        ve,
+                        "double mirror of v_edge({},{}) should be itself",
+                        x,
+                        y
+                    );
                 }
             }
         }
@@ -888,7 +1349,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap();
 
@@ -923,7 +1387,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap();
 
@@ -969,7 +1436,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap();
 
@@ -986,8 +1456,13 @@ mod tests {
         for y in 0..4 {
             for x in 0..4 {
                 let cell = g.cell(x, y);
-                assert!(matches!(cell, CellConstraint::None),
-                    "cell({},{}) should be None, got {:?}", x, y, cell);
+                assert!(
+                    matches!(cell, CellConstraint::None),
+                    "cell({},{}) should be None, got {:?}",
+                    x,
+                    y,
+                    cell
+                );
             }
         }
     }
@@ -1021,7 +1496,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         })
         .unwrap();
         assert_eq!(g.width, 1);
@@ -1049,10 +1527,9 @@ mod tests {
         .unwrap();
         assert_eq!(jxy.symmetry, Some(SymmetryKind::MirrorXY));
 
-        let jnone: PuzzleJson = serde_json::from_str(
-            r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]]}"#,
-        )
-        .unwrap();
+        let jnone: PuzzleJson =
+            serde_json::from_str(r#"{"width":2,"height":2,"starts":[[0,0]],"ends":[[2,2]]}"#)
+                .unwrap();
         assert_eq!(jnone.symmetry, None);
     }
 
@@ -1072,7 +1549,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         });
         assert!(err.is_err());
 
@@ -1090,7 +1570,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         });
         assert!(err.is_err());
     }
@@ -1136,8 +1619,10 @@ mod tests {
             // Only check edges with valid endpoints (skip padding)
             if u < g.num_nodes() && v < g.num_nodes() {
                 assert_eq!(
-                    g.edge_endpoints_to_idx(u, v), ei,
-                    "roundtrip failed for edge {}", ei
+                    g.edge_endpoints_to_idx(u, v),
+                    ei,
+                    "roundtrip failed for edge {}",
+                    ei
                 );
             }
         }
@@ -1164,8 +1649,11 @@ mod tests {
                 let ei = g.h_edge_index(x, y);
                 let (u, v) = g.edge_idx_to_endpoints(ei);
                 assert_eq!(
-                    g.edge_endpoints_to_idx(u, v), ei,
-                    "h_edge({},{}): roundtrip mismatch", x, y
+                    g.edge_endpoints_to_idx(u, v),
+                    ei,
+                    "h_edge({},{}): roundtrip mismatch",
+                    x,
+                    y
                 );
             }
         }
@@ -1174,8 +1662,11 @@ mod tests {
                 let ei = g.v_edge_index(x, y);
                 let (u, v) = g.edge_idx_to_endpoints(ei);
                 assert_eq!(
-                    g.edge_endpoints_to_idx(u, v), ei,
-                    "v_edge({},{}): roundtrip mismatch", x, y
+                    g.edge_endpoints_to_idx(u, v),
+                    ei,
+                    "v_edge({},{}): roundtrip mismatch",
+                    x,
+                    y
                 );
             }
         }

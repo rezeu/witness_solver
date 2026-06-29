@@ -1,0 +1,6 @@
+mode,split_depth,elapsed_secs,nodes,pruned,pruner_hits,work_items,solved,pruner_profile
+sequential,,11.673114923,12855257,6132453,dots:3718070|triangles:247780|regions:2166603,1,true,all
+parallel,2,14.722659160,52318516,25730153,dots:15764554|triangles:950652|regions:9014947,4,true,all
+parallel,3,7.332991022,38690984,19014746,dots:11639778|triangles:711726|regions:6663242,10,true,all
+parallel,4,3.951847877,20308959,9989519,dots:6138381|triangles:300446|regions:3550692,24,true,all
+parallel,5,8.897742933,44285049,21765069,dots:13266720|triangles:878479|regions:7619870,54,true,all

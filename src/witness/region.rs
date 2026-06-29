@@ -1,12 +1,13 @@
-use crate::witness::graph::WitnessGraph;
 #[cfg(test)]
 use crate::witness::graph::PuzzleJson;
+use crate::witness::graph::WitnessGraph;
 use crate::witness::state::WitnessState;
 
 pub struct RegionMap {
-    pub labels: Vec<u8>,  // region id per cell, indexed as cy * width + cx
+    pub labels: Vec<u8>, // region id per cell, indexed as cy * width + cx
     pub count: u8,
     width: usize,
+    pub cells_by_region: Vec<Vec<(usize, usize)>>,
 }
 
 impl RegionMap {
@@ -15,13 +16,8 @@ impl RegionMap {
         self.labels[cy * self.width + cx]
     }
 
-    pub fn cells_in_region(&self, region: u8) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let w = self.width;
-        self.labels
-            .iter()
-            .enumerate()
-            .filter(move |&(_, r)| *r == region)
-            .map(move |(i, _)| (i % w, i / w))
+    pub fn cells_in_region(&self, region: u8) -> &[(usize, usize)] {
+        &self.cells_by_region[region as usize]
     }
 }
 
@@ -82,10 +78,16 @@ pub fn compute_regions(s: &WitnessState, g: &WitnessGraph) -> RegionMap {
         }
     }
 
+    let mut cells_by_region = vec![Vec::new(); region_id as usize];
+    for (i, &r) in labels.iter().enumerate() {
+        cells_by_region[r as usize].push((i % w, i / w));
+    }
+
     RegionMap {
         labels,
         count: region_id,
         width: w,
+        cells_by_region,
     }
 }
 
@@ -107,7 +109,10 @@ mod tests {
             stars: vec![],
             triangles: vec![],
             tetris: vec![],
+            sun_cells: vec![],
             eliminations: vec![],
+            colored_node_dots: vec![],
+            colored_edge_dots: vec![],
         };
         WitnessGraph::from_json(json).unwrap()
     }
@@ -138,8 +143,8 @@ mod tests {
         set_used(&mut s, g.v_edge_index(1, 2));
         let regions = compute_regions(&s, &g);
         assert_eq!(regions.count, 2);
-        let left_count = regions.cells_in_region(0).count();
-        let right_count = regions.cells_in_region(1).count();
+        let left_count = regions.cells_in_region(0).len();
+        let right_count = regions.cells_in_region(1).len();
         assert_eq!(left_count, 3);
         assert_eq!(right_count, 6);
     }

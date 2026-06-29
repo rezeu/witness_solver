@@ -1,0 +1,8 @@
+{
+  "width": 4,
+  "height": 4,
+  "starts": [[0, 0]],
+  "ends": [[4, 4]],
+  "symmetry": "y",
+  "node_dots": [[2, 2]]
+}

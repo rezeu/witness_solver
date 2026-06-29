@@ -1,1 +1,11 @@
-/target
+/target/
+
+# Local agent/tool state
+/.claude/
+/.sisyphus/
+/.agents/
+/.codex/
+/feedback/
+
+# Editor-local files
+/.vscode/

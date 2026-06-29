@@ -1,0 +1,6 @@
+mode,split_depth,elapsed_secs,nodes,pruned,pruner_hits,work_items,solved,pruner_profile
+sequential,,0.000012432,9,0,reachability:0,1,true,all
+parallel,2,0.000687430,10,0,reachability:0,4,true,all
+parallel,3,0.000279724,13,0,reachability:0,10,true,all
+parallel,4,0.000564954,22,0,reachability:0,24,true,all
+parallel,5,0.000445123,50,0,reachability:0,58,true,all
