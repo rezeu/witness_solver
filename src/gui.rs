@@ -133,23 +133,6 @@ impl Tool {
         }
     }
 
-    fn icon(self) -> &'static str {
-        match self {
-            Tool::Start => "S",
-            Tool::End => "E",
-            Tool::Square => "■",
-            Tool::Star => "★",
-            Tool::Sun => "☼",
-            Tool::Triangle => "▲",
-            Tool::Tetris => "▦",
-            Tool::Elimination => "X",
-            Tool::BrokenEdge => "╱",
-            Tool::NodeDot => "•",
-            Tool::EdgeDot => "─",
-            Tool::Eraser => "⌫",
-        }
-    }
-
     fn uses_cell_color(self) -> bool {
         matches!(self, Tool::Square | Tool::Star | Tool::Sun)
     }
@@ -239,7 +222,6 @@ impl From<&EditablePuzzle> for PuzzleJson {
                     color: *color,
                 })
                 .collect(),
-            ..Default::default()
         }
     }
 }
@@ -1032,8 +1014,15 @@ impl WitnessApp {
 
     fn tool_button(&mut self, ui: &mut egui::Ui, tool: Tool) {
         let active = self.current_tool == tool;
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 34.0), egui::Sense::click());
+        let clicked = response.clicked();
+        let hovered = response.hovered();
+        response.on_hover_text(tool.name());
+
         let fill = if active {
             colors::CONTROL_ACTIVE
+        } else if hovered {
+            colors::SIDEBAR_STROKE
         } else {
             colors::CONTROL_BG
         };
@@ -1042,13 +1031,14 @@ impl WitnessApp {
         } else {
             egui::Stroke::new(1.0_f32, colors::SIDEBAR_STROKE)
         };
-        let button = egui::Button::new(egui::RichText::new(tool.icon()).size(18.0))
-            .fill(fill)
-            .stroke(stroke);
-        let response = ui
-            .add_sized([36.0, 34.0], button)
-            .on_hover_text(tool.name());
-        if response.clicked() {
+
+        if ui.is_rect_visible(rect) {
+            ui.painter().rect_filled(rect, 5.0, fill);
+            ui.painter().rect_stroke(rect, 5.0, stroke);
+            draw_tool_icon(ui.painter(), tool, rect.shrink(6.0), active);
+        }
+
+        if clicked {
             self.current_tool = tool;
         }
     }
@@ -2040,6 +2030,104 @@ fn draw_end_node(painter: &egui::Painter, pos: egui::Pos2, geometry: BoardGeomet
     }
 }
 
+fn draw_tool_icon(painter: &egui::Painter, tool: Tool, rect: egui::Rect, active: bool) {
+    let center = rect.center();
+    let size = rect.width().min(rect.height());
+    let accent = if active { colors::PATH } else { colors::TEXT };
+    let muted = if active {
+        colors::PATH_CORE
+    } else {
+        colors::TEXT_MUTED
+    };
+
+    match tool {
+        Tool::Start => {
+            let r = size * 0.35;
+            painter.circle_filled(center, r, colors::CHANNEL);
+            painter.circle_stroke(center, r, egui::Stroke::new(2.0_f32, accent));
+            painter.circle_filled(center, r * 0.42, muted);
+        }
+        Tool::End => {
+            let stroke = egui::Stroke::new(3.0_f32, accent);
+            let left = center + egui::vec2(-size * 0.32, 0.0);
+            let right = center + egui::vec2(size * 0.26, 0.0);
+            painter.line_segment([left, right], stroke);
+            painter.circle_filled(right, size * 0.2, accent);
+        }
+        Tool::Square => draw_square_symbol(painter, center, size * 0.56, accent),
+        Tool::Star => draw_star_symbol(painter, center, size * 0.35, accent),
+        Tool::Sun => draw_sun_symbol(painter, center, size * 0.36, accent),
+        Tool::Triangle => draw_filled_triangle(painter, center, size * 0.58, colors::TRIANGLE),
+        Tool::Tetris => {
+            const TOOL_TETRIS_SHAPE: [[i8; 2]; 4] = [[0, 0], [1, 0], [0, 1], [0, 2]];
+            draw_tetris_symbol(
+                painter,
+                center,
+                size * 0.68,
+                &TOOL_TETRIS_SHAPE,
+                false,
+                false,
+            );
+        }
+        Tool::Elimination => draw_elimination_symbol(painter, center, size * 0.6),
+        Tool::BrokenEdge => {
+            let stroke = egui::Stroke::new(3.0_f32, accent);
+            let left_a = center + egui::vec2(-size * 0.36, -size * 0.16);
+            let left_b = center + egui::vec2(-size * 0.08, -size * 0.03);
+            let right_a = center + egui::vec2(size * 0.08, size * 0.03);
+            let right_b = center + egui::vec2(size * 0.36, size * 0.16);
+            painter.line_segment([left_a, left_b], stroke);
+            painter.line_segment([right_a, right_b], stroke);
+            painter.line_segment(
+                [
+                    center + egui::vec2(-size * 0.08, size * 0.24),
+                    center + egui::vec2(size * 0.08, -size * 0.24),
+                ],
+                egui::Stroke::new(2.0_f32, colors::ERROR_TEXT),
+            );
+        }
+        Tool::NodeDot => {
+            painter.circle_filled(center, size * 0.3, colors::DOT_RING);
+            painter.circle_filled(center, size * 0.22, accent);
+        }
+        Tool::EdgeDot => {
+            let stroke = egui::Stroke::new(3.0_f32, accent);
+            painter.line_segment(
+                [
+                    center + egui::vec2(-size * 0.38, 0.0),
+                    center + egui::vec2(size * 0.38, 0.0),
+                ],
+                stroke,
+            );
+            painter.circle_filled(center, size * 0.17, colors::DOT_RING);
+            painter.circle_filled(center, size * 0.12, colors::DOT_BLACK);
+        }
+        Tool::Eraser => {
+            let tilt = size * 0.18;
+            let half_w = size * 0.32;
+            let half_h = size * 0.2;
+            let points = vec![
+                center + egui::vec2(-half_w + tilt, -half_h),
+                center + egui::vec2(half_w + tilt, -half_h),
+                center + egui::vec2(half_w - tilt, half_h),
+                center + egui::vec2(-half_w - tilt, half_h),
+            ];
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                muted,
+                egui::Stroke::new(1.2_f32, accent),
+            ));
+            painter.line_segment(
+                [
+                    center + egui::vec2(size * 0.02, -half_h),
+                    center + egui::vec2(-size * 0.12, half_h),
+                ],
+                egui::Stroke::new(1.2_f32, colors::CONTROL_BG),
+            );
+        }
+    }
+}
+
 fn draw_square_symbol(
     painter: &egui::Painter,
     center: egui::Pos2,
@@ -2595,4 +2683,211 @@ pub fn run_gui(puzzle_path: Option<String>) {
         Box::new(|_cc| Ok(Box::new(app))),
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_geometry() -> BoardGeometry {
+        BoardGeometry::new(
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 560.0)),
+            4,
+            4,
+        )
+        .expect("valid board geometry")
+    }
+
+    #[test]
+    fn hit_test_distinguishes_nodes_edges_and_cells() {
+        let app = WitnessApp::default();
+        let geometry = test_geometry();
+
+        assert_eq!(
+            app.hit_test(geometry.node_pos(0, 0), geometry, 4, 4),
+            Some(HitTarget {
+                coords: [0, 0],
+                kind: HitKind::Node,
+            })
+        );
+
+        let horizontal_edge =
+            geometry.node_pos(1, 2) + (geometry.node_pos(2, 2) - geometry.node_pos(1, 2)) * 0.5;
+        assert_eq!(
+            app.hit_test(horizontal_edge, geometry, 4, 4),
+            Some(HitTarget {
+                coords: [1, 2],
+                kind: HitKind::HEdge,
+            })
+        );
+
+        let vertical_edge =
+            geometry.node_pos(3, 1) + (geometry.node_pos(3, 2) - geometry.node_pos(3, 1)) * 0.5;
+        assert_eq!(
+            app.hit_test(vertical_edge, geometry, 4, 4),
+            Some(HitTarget {
+                coords: [3, 1],
+                kind: HitKind::VEdge,
+            })
+        );
+
+        assert_eq!(
+            app.hit_test(geometry.cell_rect(2, 3).center(), geometry, 4, 4),
+            Some(HitTarget {
+                coords: [2, 3],
+                kind: HitKind::Cell,
+            })
+        );
+    }
+
+    #[test]
+    fn cell_tools_place_configured_triangle_tetris_and_erase() {
+        let mut app = WitnessApp::default();
+        let geometry = test_geometry();
+        let cell_center = geometry.cell_rect(1, 1).center();
+
+        app.current_tool = Tool::Triangle;
+        app.triangle_count = 3;
+        app.handle_click(cell_center, geometry, 4, 4, false);
+        assert_eq!(app.puzzle.triangles.len(), 1);
+        assert_eq!(app.puzzle.triangles[0].pos, [1, 1]);
+        assert_eq!(app.puzzle.triangles[0].count, 3);
+
+        app.current_tool = Tool::Tetris;
+        app.tetris_negative = true;
+        app.tetris_editor_can_rotate = false;
+        app.tetris_editor_shape = tetris_preset("L");
+        app.handle_click(cell_center, geometry, 4, 4, false);
+        assert!(app.puzzle.triangles.is_empty());
+        assert_eq!(app.puzzle.tetris.len(), 1);
+        assert_eq!(app.puzzle.tetris[0].pos, [1, 1]);
+        assert!(app.puzzle.tetris[0].negative);
+        assert!(!app.puzzle.tetris[0].can_rotate);
+        assert_eq!(app.puzzle.tetris[0].shape, tetris_preset("L"));
+
+        app.current_tool = Tool::Eraser;
+        app.handle_click(cell_center, geometry, 4, 4, false);
+        assert!(app.puzzle.tetris.is_empty());
+    }
+
+    #[test]
+    fn node_and_edge_tools_place_colored_dots_and_broken_edges() {
+        let mut app = WitnessApp::default();
+        let geometry = test_geometry();
+        let node_pos = geometry.node_pos(2, 2);
+        let edge_pos =
+            geometry.node_pos(0, 1) + (geometry.node_pos(1, 1) - geometry.node_pos(0, 1)) * 0.5;
+
+        app.current_tool = Tool::NodeDot;
+        app.dot_color = 2;
+        app.handle_click(node_pos, geometry, 4, 4, false);
+        assert!(app.puzzle.node_dots.is_empty());
+        assert_eq!(app.puzzle.colored_node_dots, vec![([2, 2], 2)]);
+
+        app.handle_right_click(node_pos, geometry, 4, 4);
+        assert!(app.puzzle.colored_node_dots.is_empty());
+
+        app.current_tool = Tool::EdgeDot;
+        app.dot_color = 3;
+        app.handle_click(edge_pos, geometry, 4, 4, false);
+        assert!(app.puzzle.edge_dots.is_empty());
+        assert_eq!(app.puzzle.colored_edge_dots, vec![([[0, 1], [1, 1]], 3)]);
+
+        app.current_tool = Tool::BrokenEdge;
+        app.handle_click(edge_pos, geometry, 4, 4, false);
+        assert_eq!(app.puzzle.broken_edges, vec![[[0, 1], [1, 1]]]);
+        app.handle_click(edge_pos, geometry, 4, 4, false);
+        assert!(app.puzzle.broken_edges.is_empty());
+    }
+
+    #[test]
+    fn editable_json_roundtrip_preserves_gui_supported_constraints() {
+        let json = PuzzleJson {
+            width: 3,
+            height: 2,
+            starts: vec![[0, 0]],
+            ends: vec![[3, 2]],
+            node_dots: vec![[1, 1]],
+            edge_dots: vec![[[0, 1], [1, 1]]],
+            broken_edges: vec![[[2, 0], [3, 0]]],
+            squares: vec![SquareJson {
+                pos: [0, 0],
+                color: 1,
+            }],
+            stars: vec![StarJson {
+                pos: [1, 0],
+                color: 3,
+            }],
+            triangles: vec![TriangleJson {
+                pos: [2, 0],
+                count: 2,
+            }],
+            tetris: vec![TetrisJson {
+                pos: [0, 1],
+                shape: tetris_preset("T"),
+                negative: true,
+                can_rotate: false,
+            }],
+            sun_cells: vec![SunJson {
+                pos: [1, 1],
+                color: 4,
+            }],
+            eliminations: vec![[2, 1]],
+            colored_node_dots: vec![ColoredDotJson {
+                pos: [2, 2],
+                color: 2,
+            }],
+            colored_edge_dots: vec![ColoredEdgeDotJson {
+                endpoints: [[1, 2], [2, 2]],
+                color: 3,
+            }],
+            symmetry: Some(SymmetryKind::MirrorX),
+        };
+
+        let editable = EditablePuzzle::from_json(&json);
+        let roundtrip = editable.to_json();
+        assert_eq!(
+            serde_json::to_value(&roundtrip).expect("roundtrip serializes"),
+            serde_json::to_value(&json).expect("source serializes")
+        );
+    }
+
+    #[test]
+    fn resize_clamps_endpoints_and_prunes_out_of_bounds_constraints() {
+        let mut puzzle = EditablePuzzle {
+            width: 4,
+            height: 4,
+            starts: vec![[4, 4]],
+            ends: vec![[3, 3]],
+            squares: vec![
+                SquareJson {
+                    pos: [0, 0],
+                    color: 1,
+                },
+                SquareJson {
+                    pos: [3, 3],
+                    color: 2,
+                },
+            ],
+            triangles: vec![TriangleJson {
+                pos: [2, 1],
+                count: 1,
+            }],
+            broken_edges: vec![[[0, 0], [1, 0]], [[3, 3], [4, 3]]],
+            node_dots: vec![[1, 1], [4, 4]],
+            colored_edge_dots: vec![([[1, 1], [1, 2]], 2), ([[4, 3], [4, 4]], 3)],
+            ..EditablePuzzle::default()
+        };
+
+        puzzle.resize(2, 2);
+
+        assert_eq!(puzzle.starts, vec![[2, 2]]);
+        assert_eq!(puzzle.ends, vec![[2, 2]]);
+        assert_eq!(puzzle.squares.len(), 1);
+        assert_eq!(puzzle.squares[0].pos, [0, 0]);
+        assert!(puzzle.triangles.is_empty());
+        assert_eq!(puzzle.broken_edges, vec![[[0, 0], [1, 0]]]);
+        assert_eq!(puzzle.node_dots, vec![[1, 1]]);
+        assert_eq!(puzzle.colored_edge_dots, vec![([[1, 1], [1, 2]], 2)]);
+    }
 }

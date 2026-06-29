@@ -5,6 +5,10 @@ use crate::witness::graph::{PuzzleJson, SymmetryKind};
 use crate::witness::region::{RegionMap, compute_regions};
 use crate::witness::state::WitnessState;
 
+type TetrisShape = Vec<(i8, i8)>;
+type TetrisRotations = Vec<TetrisShape>;
+type TetrisShapeChoice = (TetrisRotations, bool);
+
 /// Single satisfier that checks ALL witness rules in optimal order.
 /// Region computation is deferred until needed and shared across rule checks.
 pub struct WitnessValidator {
@@ -86,10 +90,10 @@ impl Satisfier<WitnessState> for WitnessValidator {
             if self.has_tetris && !check_tetris(g, &regions) {
                 return false;
             }
-            if !g.colored_dot_nodes.is_empty() || !g.colored_dot_edges.is_empty() {
-                if !check_colored_dots_in_regions(g, &regions, s) {
-                    return false;
-                }
+            if (!g.colored_dot_nodes.is_empty() || !g.colored_dot_edges.is_empty())
+                && !check_colored_dots_in_regions(g, &regions, s)
+            {
+                return false;
             }
         }
 
@@ -402,7 +406,7 @@ fn check_tetris_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool 
     let mut coverage = vec![0i8; w * h];
 
     // Ordered shapes: positive first, then negative
-    let mut all_shapes: Vec<(Vec<Vec<(i8, i8)>>, bool)> = Vec::new();
+    let mut all_shapes: Vec<TetrisShapeChoice> = Vec::new();
     for (s, can_rotate) in &pos_shapes {
         let rots = if *can_rotate {
             all_rotations(s)
@@ -427,7 +431,7 @@ fn check_tetris_in_region(g: &WitnessGraph, regions: &RegionMap, r: u8) -> bool 
 fn tile_backtrack(
     w: usize,
     h: usize,
-    shapes: &[(Vec<Vec<(i8, i8)>>, bool)],
+    shapes: &[TetrisShapeChoice],
     idx: usize,
     region: &[bool],
     coverage: &mut [i8],
@@ -693,10 +697,10 @@ fn check_regions_with_elimination(
         }
     }
 
-    if !g.colored_dot_nodes.is_empty() || !g.colored_dot_edges.is_empty() {
-        if !check_colored_dots_in_regions(g, regions, s) {
-            return false;
-        }
+    if (!g.colored_dot_nodes.is_empty() || !g.colored_dot_edges.is_empty())
+        && !check_colored_dots_in_regions(g, regions, s)
+    {
+        return false;
     }
 
     true

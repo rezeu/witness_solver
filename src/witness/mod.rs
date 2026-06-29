@@ -25,7 +25,7 @@ use pruners::{
 };
 use state::WitnessState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum PrunerProfile {
     None,
@@ -34,13 +34,8 @@ pub enum PrunerProfile {
     Triangles,
     Regions,
     Symmetry,
+    #[default]
     All,
-}
-
-impl Default for PrunerProfile {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl std::fmt::Display for PrunerProfile {
@@ -467,9 +462,8 @@ impl ProfileReport {
         let export = self.export();
         let _ = writeln!(
             text,
-            "{},{},{:.9},{},{},{},{},{},{}",
+            "{},,{:.9},{},{},{},{},{},{}",
             export.sequential.mode,
-            "",
             export.sequential.elapsed_secs,
             export.sequential.nodes,
             export.sequential.pruned,
