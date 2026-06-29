@@ -1,5 +1,4 @@
 use proptest::prelude::*;
-use std::collections::HashSet;
 use witness_solver::solver::state::SearchState;
 use witness_solver::solver::undo::UndoStack;
 use witness_solver::witness::graph::{PuzzleJson, WitnessGraph};
@@ -45,10 +44,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(10))]
 
     #[test]
-    fn proptest_apply_undo_roundtrip(edges in prop::collection::vec(0usize..40, 1..=10)) {
-        let unique: HashSet<usize> = edges.iter().copied().collect();
-        prop_assume!(unique.len() == edges.len());
-
+    fn proptest_apply_undo_roundtrip(move_choices in prop::collection::vec(0usize..64, 1..=10)) {
         let graph = make_4x4_graph();
         let mut state = WitnessState::new(&graph);
         let mut undo = UndoStack::new();
@@ -57,11 +53,20 @@ proptest! {
         let initial_degrees = state.degrees.clone();
         let initial_head = state.head;
 
-        for &ei in &edges {
-            state.apply_move(&graph, ei, &mut undo);
+        let mut applied = 0usize;
+        for choice in move_choices {
+            let mut moves = Vec::new();
+            state.gen_moves(&graph, &mut moves);
+            if moves.is_empty() {
+                break;
+            }
+
+            let mv = moves[choice % moves.len()];
+            state.apply_move(&graph, mv, &mut undo);
+            applied += 1;
         }
 
-        for _ in 0..edges.len() {
+        for _ in 0..applied {
             undo.rollback(&mut state);
         }
 
