@@ -312,23 +312,6 @@ impl EditablePuzzle {
         None
     }
 
-    fn is_tetris_cover(&self, cx: usize, cy: usize) -> Option<bool> {
-        for te in &self.tetris {
-            let ox = te.pos[0] as i8;
-            let oy = te.pos[1] as i8;
-            let min_dx = te.shape.iter().map(|o| o[0]).min().unwrap_or(0);
-            let min_dy = te.shape.iter().map(|o| o[1]).min().unwrap_or(0);
-            for &[dx, dy] in &te.shape {
-                let nx = ox + (dx - min_dx);
-                let ny = oy + (dy - min_dy);
-                if nx == cx as i8 && ny == cy as i8 {
-                    return Some(te.negative);
-                }
-            }
-        }
-        None
-    }
-
     fn has_broken_edge(&self, u: [usize; 2], v: [usize; 2]) -> bool {
         self.broken_edges
             .iter()
@@ -1588,13 +1571,6 @@ impl WitnessApp {
                         }
                         CellConstraint::None => {}
                     }
-                } else if let Some(negative) = self.puzzle.is_tetris_cover(cx, cy) {
-                    let fill = if negative {
-                        colors::TETRIS_NEG.linear_multiply(0.28)
-                    } else {
-                        colors::TETRIS.linear_multiply(0.28)
-                    };
-                    painter.rect_filled(rect.shrink(geometry.cell_size * 0.27), 5.0, fill);
                 }
             }
         }
